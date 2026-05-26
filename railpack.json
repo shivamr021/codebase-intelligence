@@ -1,5 +1,5 @@
 {
   "setup": {
-    "aptPkgs": ["git"]
+    "nixPkgs": ["git"]
   }
 }
