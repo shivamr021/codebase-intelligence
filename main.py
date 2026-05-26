@@ -41,17 +41,6 @@ async def health_check():
         "docs": "/docs",
     }
 
-# Debugging
-import os
-import shutil
-
-@app.get("/debug")
-def debug():
-    return {
-        "git_path": shutil.which("git"),
-        "env_git": os.getenv("GIT_PYTHON_GIT_EXECUTABLE"),
-    }
-
 # ── Routers ────────────────────────────────────────────────────────────
 from api.routes.ingest  import router as ingest_router
 from api.routes.query   import router as query_router
