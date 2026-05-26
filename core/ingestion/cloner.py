@@ -26,21 +26,30 @@ def _force_remove_readonly(func, path, _):
 
 
 def _find_git() -> str | None:
-    """Find git executable with multiple fallbacks"""
-    # Try common locations
-    possible_paths = [
+    """Find git with more fallbacks"""
+    possible = [
         shutil.which("git"),
         "/usr/bin/git",
-        "/nix/store/bin/git",  # if nix based
-        "/bin/git"
+        "/bin/git",
+        "/nix/store/" + "git",   # partial match for nix
     ]
     
-    for path in possible_paths:
-        if path and os.path.exists(path):
-            print(f"[cloner.py] Found git at: {path}")
-            return path
+    for p in possible:
+        if p and os.path.exists(p):
+            print(f"[cloner.py] ✅ Found git at: {p}")
+            return p
     
-    print("[cloner.py] WARNING: git not found in common locations")
+    # Last desperate try
+    try:
+        result = subprocess.run(["which", "git"], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            git_path = result.stdout.strip()
+            print(f"[cloner.py] ✅ Found git via which: {git_path}")
+            return git_path
+    except:
+        pass
+
+    print("[cloner.py] ❌ git executable not found")
     return None
 
 

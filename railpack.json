@@ -1,5 +1,4 @@
 {
   "$schema": "https://schema.railpack.com",
-  "buildAptPackages": ["git"],
-  "runtimeAptPackages": ["git"]
+  "nixPkgs": ["git"]
 }
