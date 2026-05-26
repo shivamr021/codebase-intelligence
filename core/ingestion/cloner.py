@@ -26,12 +26,22 @@ def _force_remove_readonly(func, path, _):
 
 
 def _find_git() -> str | None:
-    """
-    Find the git executable wherever it lives on this system.
-    shutil.which() searches PATH — works on any OS, any container.
-    Returns full path like '/nix/store/xxx/bin/git' or None if not found.
-    """
-    return shutil.which("git")
+    """Find git executable with multiple fallbacks"""
+    # Try common locations
+    possible_paths = [
+        shutil.which("git"),
+        "/usr/bin/git",
+        "/nix/store/bin/git",  # if nix based
+        "/bin/git"
+    ]
+    
+    for path in possible_paths:
+        if path and os.path.exists(path):
+            print(f"[cloner.py] Found git at: {path}")
+            return path
+    
+    print("[cloner.py] WARNING: git not found in common locations")
+    return None
 
 
 def extract_repo_name(github_url: str) -> str:
