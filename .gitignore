@@ -1,0 +1,26 @@
+# Secrets — never push this
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.py[cod]
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Cloned repos — can be huge, always regenerated
+tmp/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
