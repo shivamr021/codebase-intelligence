@@ -1,0 +1,8 @@
+{
+  "steps": [
+    {
+      "uses": "apt.packages",
+      "packages": ["git"]
+    }
+  ]
+}
