@@ -1,56 +1,31 @@
 """
-core/ingestion/cloner.py — Clones a GitHub repo using subprocess.
+core/ingestion/cloner.py — Downloads a GitHub repo via API (no git binary needed).
 
-Why subprocess instead of GitPython:
-  GitPython is a wrapper around the git CLI binary. On Railway's container,
-  the git binary location is not standard (/usr/bin/git doesn't exist).
-  GitPython can't find it and crashes at import time.
-
-  subprocess.run() with shutil.which('git') finds git wherever it is
-  on the system PATH — no hardcoded paths, works on any Linux container.
+Why not git CLI:
+  Railway's Railpack runtime container is minimal. Git binary reliably available
+  only in build containers, not runtime. Instead we use GitHub's zip download API
+  which only needs Python's stdlib (urllib/zipfile) + requests (already installed
+  as a transitive dep of qdrant-client).
 """
 
 import os
+import re
 import shutil
 import stat
-import re
-import subprocess
+import zipfile
+import tempfile
+
+import requests
 
 from config import TMP_DIR
 
 
 def _force_remove_readonly(func, path, _):
-    """Windows read-only file handler. No-op on Linux."""
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
-
-
-def _find_git() -> str | None:
-    """Find git with more fallbacks"""
-    possible = [
-        shutil.which("git"),
-        "/usr/bin/git",
-        "/bin/git",
-        "/nix/store/" + "git",   # partial match for nix
-    ]
-    
-    for p in possible:
-        if p and os.path.exists(p):
-            print(f"[cloner.py] ✅ Found git at: {p}")
-            return p
-    
-    # Last desperate try
     try:
-        result = subprocess.run(["which", "git"], capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            git_path = result.stdout.strip()
-            print(f"[cloner.py] ✅ Found git via which: {git_path}")
-            return git_path
-    except:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception:
         pass
-
-    print("[cloner.py] ❌ git executable not found")
-    return None
 
 
 def extract_repo_name(github_url: str) -> str:
@@ -58,6 +33,16 @@ def extract_repo_name(github_url: str) -> str:
     if url.endswith(".git"):
         url = url[:-4]
     return url.split("/")[-1]
+
+
+def extract_owner_repo(github_url: str):
+    """Returns (owner, repo) tuple from a github URL."""
+    url = github_url.rstrip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+    parts = url.rstrip("/").split("/")
+    # parts[-1] = repo, parts[-2] = owner
+    return parts[-2], parts[-1]
 
 
 def validate_github_url(url: str) -> bool:
@@ -70,8 +55,8 @@ def validate_github_url(url: str) -> bool:
 
 def clone_repo(github_url: str) -> dict:
     """
-    Clone a public GitHub repo to /tmp/<repo_name>/.
-    Uses subprocess + shutil.which to find git — no GitPython dependency.
+    Download a public GitHub repo as a zip via GitHub API.
+    No git binary required — works on any container.
     """
 
     if not validate_github_url(github_url):
@@ -82,62 +67,86 @@ def clone_repo(github_url: str) -> dict:
             "local_path": None,
         }
 
-    # Find git binary
-    git_path = _find_git()
-    if not git_path:
+    try:
+        owner, repo = extract_owner_repo(github_url)
+    except Exception:
         return {
             "status": "error",
-            "message": (
-                "git executable not found on this system. "
-                "Add 'git' to nixpacks.toml packages."
-            ),
+            "message": f"Could not parse owner/repo from URL: {github_url}",
             "repo_name": None,
             "local_path": None,
         }
 
-    print(f"[cloner.py] Using git at: {git_path}")
-
-    repo_name = extract_repo_name(github_url)
+    repo_name = repo
     local_path = os.path.join(TMP_DIR, repo_name)
 
-    # Clean previous clone
+    # Clean previous download
     if os.path.exists(local_path):
         shutil.rmtree(local_path, onerror=_force_remove_readonly)
 
     os.makedirs(TMP_DIR, exist_ok=True)
 
-    try:
-        result = subprocess.run(
-            [git_path, "clone", "--depth=1", github_url, local_path],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+    # GitHub zip download URL (downloads default branch)
+    zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/main.zip"
+    fallback_zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/master.zip"
 
-        if result.returncode != 0:
+    print(f"[cloner.py] Downloading repo via GitHub API: {zip_url}")
+
+    zip_path = None
+    try:
+        # Try main branch first, then master
+        response = requests.get(zip_url, timeout=60, allow_redirects=True)
+        if response.status_code == 404:
+            print(f"[cloner.py] 'main' branch not found, trying 'master'...")
+            response = requests.get(fallback_zip_url, timeout=60, allow_redirects=True)
+
+        if response.status_code != 200:
             return {
                 "status": "error",
                 "message": (
-                    f"Git clone failed for '{github_url}'. "
-                    f"Make sure the repo is public. "
-                    f"Git error: {result.stderr.strip()}"
+                    f"Could not download repo '{github_url}'. "
+                    f"Make sure the repo is public. HTTP {response.status_code}."
                 ),
                 "repo_name": None,
                 "local_path": None,
             }
 
-        print(f"[cloner.py] Successfully cloned '{repo_name}' to {local_path}")
+        # Save zip to temp file
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
+            f.write(response.content)
+            zip_path = f.name
+
+        print(f"[cloner.py] Downloaded {len(response.content) / 1024:.1f} KB, extracting...")
+
+        # Extract zip
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            # GitHub zips have a top-level folder like "repo-main/" or "repo-master/"
+            names = zf.namelist()
+            top_level = names[0].split("/")[0]  # e.g. "flask-boilerplate-main"
+
+            extract_tmp = os.path.join(TMP_DIR, f"_extract_{repo_name}")
+            if os.path.exists(extract_tmp):
+                shutil.rmtree(extract_tmp, onerror=_force_remove_readonly)
+
+            zf.extractall(extract_tmp)
+
+        # Move the inner folder to the expected local_path
+        inner_path = os.path.join(extract_tmp, top_level)
+        shutil.move(inner_path, local_path)
+        shutil.rmtree(extract_tmp, onerror=_force_remove_readonly)
+
+        print(f"[cloner.py] ✅ Successfully extracted '{repo_name}' to {local_path}")
         return {
             "status": "cloned",
-            "message": f"Successfully cloned '{repo_name}'",
+            "message": f"Successfully downloaded '{repo_name}'",
             "repo_name": repo_name,
             "local_path": local_path,
         }
 
-    except subprocess.TimeoutExpired:
+    except requests.Timeout:
         return {
             "status": "error",
-            "message": "Clone timed out after 120s. Repository may be too large.",
+            "message": "Download timed out after 60s. Repository may be too large.",
             "repo_name": None,
             "local_path": None,
         }
@@ -145,7 +154,14 @@ def clone_repo(github_url: str) -> dict:
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Unexpected error while cloning: {str(e)}",
+            "message": f"Unexpected error while downloading: {str(e)}",
             "repo_name": None,
             "local_path": None,
         }
+
+    finally:
+        if zip_path and os.path.exists(zip_path):
+            try:
+                os.unlink(zip_path)
+            except Exception:
+                pass
