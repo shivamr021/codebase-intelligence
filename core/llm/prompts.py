@@ -93,38 +93,78 @@ Rules:
 # Task: Describe the codebase architecture and return a Mermaid diagram
 # Output: Mermaid flowchart syntax (rendered by frontend with mermaid.js)
 # -----------------------------------------------------------------------
-EXPLAIN_ARCHITECTURE = """You are a software architect analysing a codebase.
+# EXPLAIN_ARCHITECTURE = """You are a software architect analysing a codebase.
 
-Below are code chunks from the repository, selected to represent the
-overall architecture:
+# Below are code chunks from the repository, selected to represent the
+# overall architecture:
 
-{code_context}
+# {code_context}
 
----
+# ---
 
-Perform two tasks:
+# Perform two tasks:
 
-TASK 1 — Architecture Summary:
-Write 3-5 sentences explaining the overall architecture of this codebase.
-What does it do? What are the main components? How do they interact?
+# TASK 1 — Architecture Summary:
+# Write 3-5 sentences explaining the overall architecture of this codebase.
+# What does it do? What are the main components? How do they interact?
 
-TASK 2 — Mermaid Diagram:
-Generate a Mermaid flowchart showing the main components and their relationships.
-Use this exact format:
+# TASK 2 — Mermaid Diagram:
+# Generate a Mermaid flowchart showing the main components and their relationships.
+# Use this exact format:
 
+# ```mermaid
+# graph TD
+#     A[ComponentName] --> B[AnotherComponent]
+#     B --> C[ThirdComponent]
+# ```
+
+# Rules:
+# - Use real file/module names from the code context, not generic labels.
+# - Maximum 12 nodes in the diagram — keep it readable.
+# - Include the full mermaid code block with the triple backticks.
+# - Architecture summary FIRST, then the mermaid diagram.
+# """
+
+EXPLAIN_ARCHITECTURE = """You are a senior software architect producing a codebase map.
+ 
+Given the code chunks below, output TWO things:
+ 
+1. SUMMARY (2–3 sentences, plain English): what this codebase does, its main tech, and its key entry points.
+ 
+2. MERMAID DIAGRAM: a flowchart showing the complete file/module dependency structure.
+ 
+DIAGRAM RULES — follow exactly or the renderer will break:
+- Start the block with:  ```mermaid
+- First line inside block: flowchart TD
+- Node IDs: alphanumeric + underscores only. No spaces, no hyphens in IDs.
+- Node labels with spaces: wrap in double quotes — A["my label"]
+- Every node referenced in an arrow must be defined somewhere
+- Group files into subgraphs by layer: subgraph API["API Layer"] ... end
+- Use arrows like: A --> B or A -->|"calls"| B
+- Include ALL files from the chunks — do not skip any
+- No ``` backticks inside node labels
+- End the block with:  ```
+ 
+Layer subgraph suggestions (use what fits the repo):
+  subgraph ENTRY["Entry Points"]
+  subgraph API["API / Routes"]
+  subgraph CORE["Core Logic"]
+  subgraph DATA["Data / Models"]
+  subgraph CONFIG["Config"]
+  subgraph UTILS["Utilities"]
+ 
+RESPOND IN EXACTLY THIS FORMAT — nothing else:
+ 
+SUMMARY: <your 2-3 sentence description>
+ 
 ```mermaid
-graph TD
-    A[ComponentName] --> B[AnotherComponent]
-    B --> C[ThirdComponent]
+flowchart TD
+<your diagram here>
 ```
-
-Rules:
-- Use real file/module names from the code context, not generic labels.
-- Maximum 12 nodes in the diagram — keep it readable.
-- Include the full mermaid code block with the triple backticks.
-- Architecture summary FIRST, then the mermaid diagram.
+ 
+Code chunks:
+{chunks}
 """
-
 
 # -----------------------------------------------------------------------
 # SUGGEST_REFACTOR

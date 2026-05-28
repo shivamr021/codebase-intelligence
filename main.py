@@ -47,9 +47,11 @@ from api.routes.query   import router as query_router
 from api.routes.graph   import router as graph_router
 from api.routes.bugs    import router as bugs_router
 from api.routes.diagram import router as diagram_router
+from api.routes.check import router as check
 
 app.include_router(ingest_router,  prefix="/api/v1", tags=["Ingestion"])
 app.include_router(query_router,   prefix="/api/v1", tags=["Query"])
 app.include_router(graph_router,   prefix="/api/v1", tags=["Graph"])
 app.include_router(bugs_router,    prefix="/api/v1", tags=["Bugs"])
 app.include_router(diagram_router, prefix="/api/v1", tags=["Diagram"])
+app.include_router(check,   prefix="/api/v1", tags=["Check"])
