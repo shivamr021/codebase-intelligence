@@ -145,13 +145,11 @@ async def ingest_repo(request: IngestRequest):
         # ── Step 5: Build Dependency Graph ─────────────────────────────
         # Build graph while local files still exist (renderer needs paths)
         graph = build_dependency_graph(file_list)
-        graph_html = render_graph_html(graph)
         stats = get_graph_stats(graph)
 
         # Store in cache for other routes to access
         graph_cache[repo_name] = {
             "graph": graph,
-            "html":  graph_html,
             "stats": stats,
         }
 

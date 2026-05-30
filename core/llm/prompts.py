@@ -131,27 +131,43 @@ Given the code chunks below, output TWO things:
  
 1. SUMMARY (2–3 sentences, plain English): what this codebase does, its main tech, and its key entry points.
  
-2. MERMAID DIAGRAM: a flowchart showing the complete file/module dependency structure.
+2. MERMAID DIAGRAM: a high-level architectural flowchart of the repository.
  
 DIAGRAM RULES — follow exactly or the renderer will break:
-- Start the block with:  ```mermaid
+
+- Start the block with: ```mermaid
 - First line inside block: flowchart TD
-- Node IDs: alphanumeric + underscores only. No spaces, no hyphens in IDs.
-- Node labels with spaces: wrap in double quotes — A["my label"]
-- Every node referenced in an arrow must be defined somewhere
-- Group files into subgraphs by layer: subgraph API["API Layer"] ... end
+- Node IDs: alphanumeric and underscores only
+- Node labels containing spaces must use quotes
+- Every node used in an edge must be defined
 - Use arrows like: A --> B or A -->|"calls"| B
-- Include ALL files from the chunks — do not skip any
-- No ``` backticks inside node labels
-- End the block with:  ```
- 
-Layer subgraph suggestions (use what fits the repo):
-  subgraph ENTRY["Entry Points"]
-  subgraph API["API / Routes"]
-  subgraph CORE["Core Logic"]
-  subgraph DATA["Data / Models"]
-  subgraph CONFIG["Config"]
-  subgraph UTILS["Utilities"]
+- Use subgraphs for architectural layers
+
+ARCHITECTURE LIMITS:
+
+- Show only the most important architectural components
+- Maximum 15 nodes
+- Maximum 25 edges
+- Focus on architecture, not individual files
+- Prefer modules, services, routes, models, databases, and external systems
+- Combine related implementation files into a single architectural node
+- Do NOT attempt to represent every file in the repository
+
+VALID SUBGRAPHS:
+
+subgraph ENTRY["Entry Points"]
+subgraph API["API / Routes"]
+subgraph CORE["Core Logic"]
+subgraph DATA["Data / Models"]
+subgraph CONFIG["Config"]
+subgraph UTILS["Utilities"]
+
+- No backticks inside node labels
+- End the Mermaid block with ```
+
+The Mermaid diagram MUST be syntactically valid Mermaid.
+Do not output explanatory text inside the Mermaid block.
+Do not reference nodes that are not defined.
  
 RESPOND IN EXACTLY THIS FORMAT — nothing else:
  

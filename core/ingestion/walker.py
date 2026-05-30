@@ -204,7 +204,7 @@ def walk_repo(local_path: str) -> list[dict]:
             # A 100KB Python file is ~3000+ lines. Rare in practice.
             # More importantly, a single file this size could overflow
             # the context window when combined with other chunks.
-            if size > 100_000:
+            if size > 50_000:
                 print(f"[walker.py] Skipping large file: {rel_path} ({size} bytes)")
                 continue
 

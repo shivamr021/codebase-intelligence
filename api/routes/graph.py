@@ -17,6 +17,7 @@ from api.models import GraphResponse
 
 # Import the cache from ingest.py — single source of truth
 from api.routes.ingest import graph_cache
+from core.graph.renderer import render_graph_html
 
 router = APIRouter()
 
@@ -48,6 +49,6 @@ async def get_graph(repo_name: str):
     return GraphResponse(
         status="success",
         repo_name=repo_name,
-        html=cached["html"],
+        html=render_graph_html(cached["graph"]),
         stats=cached["stats"],
     )

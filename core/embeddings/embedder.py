@@ -64,6 +64,16 @@ def embed_and_store(chunks: list[dict], repo_name: str) -> dict:
             "message": "No chunks provided — nothing to embed.",
             "chunks_stored": 0,
         }
+    
+    if len(chunks) > 1000:
+        return {
+            "status": "error",
+            "message": (
+                f"Repository too large. "
+                f"{len(chunks)} chunks exceeds limit."
+            ),
+            "chunks_stored": 0,
+        }
 
     # Delete stale collection — let _qdrant.add() recreate with correct params
     _delete_if_exists(repo_name)
