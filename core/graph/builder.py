@@ -89,7 +89,7 @@ def _get_python_imports(source_bytes: bytes, parser: Parser) -> list[str]:
                     # Strip alias: "import numpy as np" → "numpy"
                     if " as " in name:
                         name = name.split(" as ")[0].strip()
-                    imports.append(name.split(".")[0])  # top-level module only
+                    imports.append(name)  # top-level module only
 
         elif node.type == "import_from_statement":
             # "from auth import User" → we want "auth"
@@ -97,7 +97,7 @@ def _get_python_imports(source_bytes: bytes, parser: Parser) -> list[str]:
             for child in node.children:
                 if child.type == "dotted_name":
                     name = source_bytes[child.start_byte:child.end_byte].decode("utf-8")
-                    imports.append(name.split(".")[0])
+                    imports.append(name)
                     break
                 elif child.type == "relative_import":
                     # Relative import: "from .auth import ..."
@@ -105,7 +105,7 @@ def _get_python_imports(source_bytes: bytes, parser: Parser) -> list[str]:
                     for subchild in child.children:
                         if subchild.type == "dotted_name":
                             name = source_bytes[subchild.start_byte:subchild.end_byte].decode("utf-8")
-                            imports.append(name.split(".")[0])
+                            imports.append(name)
                     break
 
         stack.extend(node.children)
@@ -184,14 +184,27 @@ def _resolve_python_import(
     This is correct: we don't want edges to "os" or "flask".
     """
     # Direct match: look for module_name.py in all repo files
-    candidates = [f for f in all_files if os.path.basename(f) == f"{module_name}.py"]
+    module_path = module_name.replace(".", "/")
+
+    normalized_files = {
+        f.replace("\\", "/"): f
+        for f in all_files
+    }
+
+    candidates = [
+        original_path
+        for normalized_path, original_path in normalized_files.items()
+        if normalized_path.endswith(f"{module_path}.py")
+    ]
 
     if not candidates:
         # Also check for package: module_name/__init__.py
         candidates = [
-            f for f in all_files
-            if f == f"{module_name}/__init__.py"
-            or f.endswith(f"/{module_name}/__init__.py")
+            original_path
+            for normalized_path, original_path in normalized_files.items()
+            if normalized_path.endswith(
+                f"{module_path}/__init__.py"
+            )
         ]
 
     if not candidates:
@@ -303,9 +316,15 @@ def build_dependency_graph(file_list: list[dict]) -> nx.DiGraph:
         # Extract raw imports based on language
         if language == "python":
             raw_imports = _get_python_imports(source_bytes, parser)
+
             for module_name in raw_imports:
-                target = _resolve_python_import(module_name, rel_path, all_rel_paths)
-                if target and target != rel_path:  # no self-loops
+                target = _resolve_python_import(
+                    module_name,
+                    rel_path,
+                    all_rel_paths
+                )
+
+                if target and target != rel_path:
                     G.add_edge(rel_path, target, weight=1)
 
         elif language in ("javascript", "typescript"):

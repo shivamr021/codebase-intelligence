@@ -84,7 +84,18 @@ async def get_diagram(repo_name: str):
         )
 
     code_context = format_chunks_for_prompt(chunks)
-    prompt = EXPLAIN_ARCHITECTURE.format(code_context=code_context)
+
+    files = sorted({
+            chunk["file_path"]
+            for chunk in chunks
+    })
+
+    repo_structure = "\n".join(files)
+
+    prompt = EXPLAIN_ARCHITECTURE.format(
+        repo_structure=repo_structure,
+        code_context=code_context,
+    )
 
     # Slightly higher temperature for architecture — allow more natural language
     llm_response = call_llm(prompt, temperature=0.4)

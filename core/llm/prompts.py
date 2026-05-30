@@ -168,6 +168,26 @@ subgraph UTILS["Utilities"]
 The Mermaid diagram MUST be syntactically valid Mermaid.
 Do not output explanatory text inside the Mermaid block.
 Do not reference nodes that are not defined.
+
+IMPORTANT:
+
+Use the Repository Structure section to identify the major modules.
+
+Do NOT create a node for every file.
+
+Prefer architectural concepts such as:
+
+- User Interface
+- API Layer
+- Business Logic
+- AI Services
+- Data Processing
+- PDF Generation
+- External APIs
+- Storage
+
+Use architectural component names instead of file names whenever possible.
+Only use file names for true entry points such as app.py, main.py, server.py, index.ts, or similar startup files.
  
 RESPOND IN EXACTLY THIS FORMAT — nothing else:
  
@@ -178,7 +198,10 @@ flowchart TD
 <your diagram here>
 ```
  
-Code chunks:
+Repository Structure:
+{repo_structure}
+
+Code Samples:
 {code_context}
 """
 
