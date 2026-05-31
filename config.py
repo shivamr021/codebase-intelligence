@@ -47,6 +47,12 @@ QDRANT_URL: str = os.getenv("QDRANT_URL", "")
 QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY", "")
 
 # -----------------------------------------------------------------------
+# QDRANT_METADATA_COLLECTION
+# The collection name for storing repositories metadata
+# -----------------------------------------------------------------------
+QDRANT_METADATA_COLLECTION = "repo_metadata"
+
+# -----------------------------------------------------------------------
 # TMP_DIR
 # Where cloned repos are stored temporarily during processing.
 # Uses os.path.join so it works on both Windows (backslash) and Linux (slash).

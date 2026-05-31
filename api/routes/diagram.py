@@ -29,6 +29,8 @@ from core.retrieval.retriever import retrieve_all_chunks
 from core.llm.client import call_llm
 from core.llm.prompts import EXPLAIN_ARCHITECTURE, format_chunks_for_prompt
 
+from core.storage.repo_metadata import get_repo_metadata
+
 router = APIRouter()
 
 
@@ -73,6 +75,21 @@ async def get_diagram(repo_name: str):
     Returns architecture summary + Mermaid syntax.
     Frontend renders Mermaid string using mermaid.js — no image generation needed.
     """
+
+    cached = get_repo_metadata(repo_name)
+
+    if cached:
+        print(
+            f"[diagram.py] Using cached architecture "
+            f"for '{repo_name}'"
+        )
+
+        return DiagramResponse(
+            status="success",
+            repo_name=repo_name,
+            summary=cached["summary"],
+            mermaid=cached["mermaid"],
+        )
 
     # Use broad sample for architecture — want overall picture, not specific detail
     chunks = retrieve_all_chunks(repo_name, limit=40)
