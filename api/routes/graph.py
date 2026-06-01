@@ -18,6 +18,8 @@ from api.models import GraphResponse
 # Import the cache from ingest.py — single source of truth
 from api.routes.ingest import graph_cache
 from core.graph.renderer import render_graph_html
+from core.graph.serializer import deserialize_graph
+from core.storage.repo_metadata import get_repo_metadata
 
 router = APIRouter()
 
@@ -35,13 +37,30 @@ async def get_graph(repo_name: str):
     """
 
     if repo_name not in graph_cache:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"No graph found for '{repo_name}'. "
-                f"Run POST /api/v1/ingest first, or the server may have restarted "
-                f"(graph cache is in-memory and resets on restart)."
-            ),
+
+        metadata = get_repo_metadata(repo_name)
+
+        if not metadata:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No graph found for '{repo_name}'. "
+                    f"Run POST /api/v1/ingest first."
+                ),
+            )
+
+        graph = deserialize_graph(
+            metadata["graph_data"]
+        )
+
+        graph_cache[repo_name] = {
+            "graph": graph,
+            "stats": metadata["graph_stats"],
+        }
+
+        print(
+            f"[graph.py] Recovered graph "
+            f"for '{repo_name}' from metadata"
         )
 
     cached = graph_cache[repo_name]
