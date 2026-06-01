@@ -46,6 +46,12 @@ def generate_architecture(chunks: list[dict],) -> tuple[str, str]:
         temperature=0.4,
     )
 
+    if llm_response.startswith("[LLM Error]"):
+        return (
+            "Architecture generation failed.",
+            "flowchart TD\nA[Generation Failed] --> B[Prompt Too Large]"
+        )
+
     summary, mermaid = (parse_architecture_response(llm_response))
 
     if not mermaid:

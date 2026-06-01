@@ -63,7 +63,7 @@ async def get_diagram(repo_name: str):
         )
 
     # Use broad sample for architecture — want overall picture, not specific detail
-    chunks = retrieve_all_chunks(repo_name, limit=40)
+    chunks = retrieve_all_chunks(repo_name, limit=10)
 
     if not chunks:
         raise HTTPException(
