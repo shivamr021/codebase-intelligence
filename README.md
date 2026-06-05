@@ -371,6 +371,9 @@ AI was used as a development assistant rather than an autonomous code generator.
 GitHub:
 https://github.com/shivamr021
 
+LinkedIn:
+https://www.linkedin.com/in/shivamrathod021/
+
 ---
 
 ## License
