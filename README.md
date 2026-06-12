@@ -2,8 +2,6 @@
 
 🔗 Live Demo: https://codebase-intelligence.shivamrathod145.workers.dev/
 
-🤗 **Hugging Face Space:** https://huggingface.co/spaces/shivamr021/codebase-intelligence
-
 An AI-powered repository analysis platform that ingests a GitHub repository, builds a dependency graph, generates architecture diagrams, performs semantic code search, and reviews code for potential issues using Large Language Models.
 
 ## Overview
@@ -363,6 +361,17 @@ AI was used as a development assistant rather than an autonomous code generator.
 * Architecture quality improvements
 * Repository comparison mode
 * Pull request analysis
+
+---
+
+## 🔗 Deployment & Architecture Links
+
+This project utilizes a decoupled architecture, separating the web interface from the AI inference engine.
+
+* **Live Web App:** [Codebase Intelligence (Cloudflare)](https://codebase-intelligence.shivamrathod145.workers.dev/)
+* **Frontend Source Code:** [shivamr021/codebase-intelligence-web](https://github.com/shivamr021/codebase-intelligence-web)
+* **Backend API Hosting:** [Hugging Face Spaces](https://huggingface.co/spaces/shivamr021/codebase-intelligence)
+* **Backend Source Code:** You are here.
 
 ---
 
