@@ -63,8 +63,10 @@ from core.graph.builder import (
 )
 
 from core.graph.serializer import (
+    deserialize_graph,
     serialize_graph,
 )
+from core.retrieval.retriever import retrieve_all_chunks
 
 from core.llm.architecture import (
     ARCHITECTURE_FAILED,
@@ -162,21 +164,21 @@ def _run_graph_and_architecture(
     architecture_ok = summary != ARCHITECTURE_FAILED
     print(f"[ingest] Architecture {'generated' if architecture_ok else 'failed'}")
 
-    if architecture_ok:
-        save_repo_metadata(
-            repo_name=repo_name,
-            summary=summary,
-            mermaid=mermaid,
-            graph_stats=stats,
-            graph_data=serialize_graph(graph),
-            architecture_context=architecture_context,
-            commit_sha=commit_sha,
-            file_hashes=file_hashes,
-            extra={"index_version": index_version},
-        )
-        print(f"[ingest] Metadata persisted")
-    else:
-        print("[ingest] Architecture generation failed — metadata not saved")
+    # AD13: the graph, hashes and SHA are saved even when the architecture
+    # failed (architecture_ok: false), so /graph survives a restart and the
+    # next ingest at the same SHA regenerates only the architecture.
+    save_repo_metadata(
+        repo_name=repo_name,
+        summary=summary if architecture_ok else "",
+        mermaid=mermaid if architecture_ok else "",
+        graph_stats=stats,
+        graph_data=serialize_graph(graph),
+        architecture_context=architecture_context,
+        commit_sha=commit_sha,
+        file_hashes=file_hashes,
+        extra={"index_version": index_version, "architecture_ok": architecture_ok},
+    )
+    print(f"[ingest] Metadata persisted (architecture_ok={architecture_ok})")
 
     # Store in cache for other routes to access
     graph_cache[repo_name] = {
@@ -194,6 +196,43 @@ def _with_architecture_note(message: str, architecture_ok: bool) -> str:
     if architecture_ok:
         return message
     return f"{message} Architecture generation failed; ingest again to retry it."
+
+
+def _architecture_ok(metadata: dict) -> bool:
+    """A missing flag (metadata saved before AD13) counts as ok when an architecture is stored."""
+    flag = metadata.get("architecture_ok")
+    if flag is None:
+        return bool(metadata.get("mermaid"))
+    return bool(flag)
+
+
+def _retry_architecture(collection_name, metadata, commit_sha, file_hashes) -> bool:
+    """
+    AD13: regenerate only the architecture for an index whose chunks and
+    graph are already stored. No download and no embedding: the chunks
+    come from Qdrant and the graph from the saved graph_data.
+    """
+    print(f"[ingest] Retrying only the architecture for '{collection_name}'")
+    context = metadata.get("architecture_context") or get_architecture_context(
+        deserialize_graph(metadata.get("graph_data") or {})
+    )
+    chunks = select_architecture_chunks(retrieve_all_chunks(collection_name, limit=100), max_chunks=12)
+    summary, mermaid = generate_architecture(chunks, context)
+    architecture_ok = summary != ARCHITECTURE_FAILED
+
+    save_repo_metadata(
+        repo_name=collection_name,
+        summary=summary if architecture_ok else "",
+        mermaid=mermaid if architecture_ok else "",
+        graph_stats=metadata.get("graph_stats", {}),
+        graph_data=metadata.get("graph_data", {}),
+        architecture_context=context,
+        commit_sha=commit_sha,
+        file_hashes=file_hashes,
+        extra={"index_version": read_index_version(metadata), "architecture_ok": architecture_ok},
+    )
+    print(f"[ingest] Architecture retry {'succeeded' if architecture_ok else 'failed again'}")
+    return architecture_ok
 
 
 @router.post(
@@ -276,13 +315,20 @@ async def ingest_repo(request: IngestRequest):
         print(f"[ingest] '{collection_name}' is already up to date (commit {commit_sha[:12]})")
         print(f"[ingest] Skipping download — no bandwidth used")
 
+        message = f"'{collection_name}' is already up to date (commit {commit_sha[:12]}...)."
+        if not _architecture_ok(existing_metadata):
+            architecture_ok = _retry_architecture(
+                collection_name, existing_metadata, commit_sha, stored_hashes,
+            )
+            message = _with_architecture_note(message, architecture_ok)
+
         return IngestResponse(
             status="success",
             repo_name=collection_name,
             files_indexed=0,
             chunks_stored=0,
             graph_ready=collection_name in graph_cache,
-            message=f"'{collection_name}' is already up to date (commit {commit_sha[:12]}...).",
+            message=message,
             incremental=False,
             commit_sha=commit_sha,
         )
@@ -349,7 +395,13 @@ async def ingest_repo(request: IngestRequest):
             if n_added == 0 and n_modified == 0 and n_deleted == 0:
                 print(f"[ingest] No file content changes detected — skipping re-index")
                 # Still update the commit SHA so next check is faster
-                if existing_metadata and commit_sha:
+                message = f"'{collection_name}' content unchanged — metadata updated."
+                if not _architecture_ok(existing_metadata):
+                    architecture_ok = _retry_architecture(
+                        collection_name, existing_metadata, commit_sha, current_hashes,
+                    )
+                    message = _with_architecture_note(message, architecture_ok)
+                elif commit_sha:
                     save_repo_metadata(
                         repo_name=collection_name,
                         summary=existing_metadata.get("summary", ""),
@@ -359,7 +411,7 @@ async def ingest_repo(request: IngestRequest):
                         architecture_context=existing_metadata.get("architecture_context"),
                         commit_sha=commit_sha,
                         file_hashes=current_hashes,
-                        extra={"index_version": read_index_version(existing_metadata)},
+                        extra={"index_version": read_index_version(existing_metadata), "architecture_ok": True},
                     )
                 return IngestResponse(
                     status="success",
@@ -367,7 +419,7 @@ async def ingest_repo(request: IngestRequest):
                     files_indexed=len(file_list),
                     chunks_stored=0,
                     graph_ready=collection_name in graph_cache,
-                    message=f"'{collection_name}' content unchanged — metadata updated.",
+                    message=message,
                     incremental=True,
                     files_added=0,
                     files_modified=0,
