@@ -50,7 +50,7 @@ def _force_remove_readonly(func, path, _):
 from api.models import IngestRequest, IngestResponse, ErrorResponse
 from core.ingestion.cloner import resolve_repo, clone_repo
 from core.ingestion.walker import walk_repo
-from core.ingestion.chunker import chunk_files
+from core.ingestion.chunker import INDEX_VERSION, chunk_files, read_index_version
 from core.ingestion.diff import compute_file_diff
 from core.embeddings.embedder import (
     embed_and_store,
@@ -117,11 +117,15 @@ def _build_file_hashes(file_list: list[dict]) -> dict[str, str]:
 
 def _run_graph_and_architecture(
     file_list, all_chunks, repo_name, graph_cache,
-    commit_sha, file_hashes,
+    commit_sha, file_hashes, index_version,
 ):
     """
     Shared logic for graph building + architecture generation + metadata save.
     Used by both full and incremental paths.
+
+    index_version is the version of the chunks stored in Qdrant: the full
+    path passes INDEX_VERSION; the incremental path keeps the stored one,
+    because it rebuilt only the changed files' chunks.
 
     IMPORTANT: build_dependency_graph() takes the FULL file_list and reads
     each file from disk to parse imports. It does NOT use chunks.
@@ -166,6 +170,7 @@ def _run_graph_and_architecture(
             architecture_context=architecture_context,
             commit_sha=commit_sha,
             file_hashes=file_hashes,
+            extra={"index_version": index_version},
         )
         print(f"[ingest] Metadata persisted")
     else:
@@ -345,6 +350,7 @@ async def ingest_repo(request: IngestRequest):
                         architecture_context=existing_metadata.get("architecture_context"),
                         commit_sha=commit_sha,
                         file_hashes=current_hashes,
+                        extra={"index_version": read_index_version(existing_metadata)},
                     )
                 return IngestResponse(
                     status="success",
@@ -403,7 +409,7 @@ async def ingest_repo(request: IngestRequest):
 
             _run_graph_and_architecture(
                 file_list, all_chunks_for_architecture, collection_name, graph_cache,
-                commit_sha, current_hashes,
+                commit_sha, current_hashes, read_index_version(existing_metadata),
             )
 
             return IngestResponse(
@@ -458,7 +464,7 @@ async def ingest_repo(request: IngestRequest):
             # ── Step 5: Graph + Architecture + Metadata ────────────────
             _run_graph_and_architecture(
                 file_list, all_chunks, collection_name, graph_cache,
-                commit_sha, current_hashes,
+                commit_sha, current_hashes, INDEX_VERSION,
             )
 
             return IngestResponse(

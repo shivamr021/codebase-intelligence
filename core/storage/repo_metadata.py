@@ -62,6 +62,7 @@ def save_repo_metadata(
     architecture_context=None,
     commit_sha=None,
     file_hashes=None,
+    extra=None,
 ):
     """
     Store architecture + graph artifacts for a repository.
@@ -69,6 +70,7 @@ def save_repo_metadata(
 
     commit_sha:  The HEAD commit SHA at index time (for incremental indexing).
     file_hashes: Dict of {rel_path: sha256_hex} for every indexed file.
+    extra:       More payload fields, e.g. {"index_version": 2}.
     """
 
     ensure_metadata_collection()
@@ -90,6 +92,7 @@ def save_repo_metadata(
             "architecture_context": architecture_context,
             "commit_sha": commit_sha,
             "file_hashes": file_hashes or {},
+            **(extra or {}),
         },
     )
 

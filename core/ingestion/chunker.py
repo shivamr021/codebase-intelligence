@@ -128,6 +128,21 @@ MIN_CHUNK_CHARS = 50
 # Maximum lines per "module" chunk (top-level code between functions/classes).
 MODULE_CHUNK_LINES = 50
 
+# Version of the chunks this module produces, stored with each repo's metadata.
+# Bump it by hand whenever a change here alters the chunks, so collections
+# built by older code count as stale and get a full re-index.
+#   1: functions, classes and types only (before module chunks)
+#   2: plus module chunks for top-level code
+INDEX_VERSION = 2
+
+
+def read_index_version(metadata: dict | None) -> int:
+    """Stored index version; missing, old or hand-edited values read as 1."""
+    value = (metadata or {}).get("index_version")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return 1
+
 
 def _get_parser(language: str) -> Parser | None:
     """
