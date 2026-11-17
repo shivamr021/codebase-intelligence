@@ -1,6 +1,6 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
-from qdrant_client.models import PointStruct
+from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
 import hashlib
 
 from config import (
@@ -108,18 +108,23 @@ def save_repo_metadata(
 def get_repo_metadata(repo_name: str):
     """
     Retrieve persisted metadata for a repository.
+    Returns None when nothing is stored yet, including on a fresh Qdrant
+    where the metadata collection does not exist.
     """
+
+    if not _client.collection_exists(QDRANT_METADATA_COLLECTION):
+        return None
 
     results, _ = _client.scroll(
         collection_name=QDRANT_METADATA_COLLECTION,
-        scroll_filter={
-            "must": [
-                {
-                    "key": "repo_name",
-                    "match": {"value": repo_name},
-                }
+        scroll_filter=Filter(
+            must=[
+                FieldCondition(
+                    key="repo_name",
+                    match=MatchValue(value=repo_name),
+                )
             ]
-        },
+        ),
         limit=1,
     )
 
