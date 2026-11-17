@@ -19,7 +19,7 @@ Why not hardcode the API key here?
 import time
 from openai import OpenAI, RateLimitError, APIError
 
-from config import GROQ_API_KEY
+from config import GROQ_API_KEY, GROQ_MAX_TOKENS, GROQ_MODEL
 
 # -----------------------------------------------------------------------
 # OpenAI client pointed at Groq's endpoint.
@@ -37,15 +37,11 @@ _client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
 )
 
-# Model we use for all generation tasks.
-# llama-3.3-70b-versatile: 70B params, 128K context, strong at code reasoning.
-# Free tier on Groq. Verify this model ID at console.groq.com if it errors.
-MODEL = "llama-3.3-70b-versatile"
-
-# Max tokens to generate per response.
-# 2048 is enough for architecture explanations and bug reports.
-# Raising this uses more of your free quota per call.
-MAX_TOKENS = 2048
+# Model and token limit come from config.py (env GROQ_MODEL, GROQ_MAX_TOKENS).
+# llama-3.3-70b-versatile was shut down; gpt-oss-120b is a reasoning model
+# and needs 8192 tokens, or architecture replies come back empty.
+MODEL = GROQ_MODEL
+MAX_TOKENS = GROQ_MAX_TOKENS
 
 
 def call_llm(prompt: str, temperature: float = 0.3) -> str:
