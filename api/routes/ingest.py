@@ -67,6 +67,7 @@ from core.graph.serializer import (
 )
 
 from core.llm.architecture import (
+    ARCHITECTURE_FAILED,
     generate_architecture,
 )
 
@@ -158,9 +159,10 @@ def _run_graph_and_architecture(
         architecture_context,
     )
 
-    print(f"[ingest] Architecture generated")
+    architecture_ok = summary != ARCHITECTURE_FAILED
+    print(f"[ingest] Architecture {'generated' if architecture_ok else 'failed'}")
 
-    if summary != "Architecture generation failed.":
+    if architecture_ok:
         save_repo_metadata(
             repo_name=repo_name,
             summary=summary,
@@ -184,7 +186,14 @@ def _run_graph_and_architecture(
 
     print(f"[ingest] Graph built: {stats['nodes']} nodes, {stats['edges']} edges")
 
-    return stats
+    return architecture_ok
+
+
+def _with_architecture_note(message: str, architecture_ok: bool) -> str:
+    """Tell the user when the architecture step failed, so they can re-ingest."""
+    if architecture_ok:
+        return message
+    return f"{message} Architecture generation failed; ingest again to retry it."
 
 
 @router.post(
@@ -407,7 +416,7 @@ async def ingest_repo(request: IngestRequest):
             # Qdrant (they're already stored there from the previous run).
             all_chunks_for_architecture = new_chunks + chunk_files(diff["unchanged"])
 
-            _run_graph_and_architecture(
+            architecture_ok = _run_graph_and_architecture(
                 file_list, all_chunks_for_architecture, collection_name, graph_cache,
                 commit_sha, current_hashes, read_index_version(existing_metadata),
             )
@@ -418,9 +427,10 @@ async def ingest_repo(request: IngestRequest):
                 files_indexed=len(file_list),
                 chunks_stored=chunks_stored,
                 graph_ready=True,
-                message=(
+                message=_with_architecture_note(
                     f"'{collection_name}' incrementally updated: "
-                    f"{n_added} added, {n_modified} modified, {n_deleted} deleted."
+                    f"{n_added} added, {n_modified} modified, {n_deleted} deleted.",
+                    architecture_ok,
                 ),
                 incremental=True,
                 files_added=n_added,
@@ -462,7 +472,7 @@ async def ingest_repo(request: IngestRequest):
             print(f"[ingest] Stored {embed_result['chunks_stored']} chunks in Qdrant")
 
             # ── Step 5: Graph + Architecture + Metadata ────────────────
-            _run_graph_and_architecture(
+            architecture_ok = _run_graph_and_architecture(
                 file_list, all_chunks, collection_name, graph_cache,
                 commit_sha, current_hashes, INDEX_VERSION,
             )
@@ -473,7 +483,10 @@ async def ingest_repo(request: IngestRequest):
                 files_indexed=len(file_list),
                 chunks_stored=embed_result["chunks_stored"],
                 graph_ready=True,
-                message=f"'{collection_name}' indexed successfully. Ready for analysis.",
+                message=_with_architecture_note(
+                    f"'{collection_name}' indexed successfully. Ready for analysis.",
+                    architecture_ok,
+                ),
                 incremental=False,
                 commit_sha=commit_sha,
             )

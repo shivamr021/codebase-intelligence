@@ -44,6 +44,19 @@ MODEL = GROQ_MODEL
 MAX_TOKENS = GROQ_MAX_TOKENS
 
 
+def _reply_text(response) -> str:
+    """
+    The reply text, or an [LLM Error] when the model sent nothing.
+    Reasoning models can spend every token on hidden reasoning and send
+    "" or None (finish_reason=length); that is a failure, not an answer.
+    """
+    choice = response.choices[0]
+    text = (choice.message.content or "").strip()
+    if not text:
+        return f"[LLM Error] Empty reply from the model (finish_reason={choice.finish_reason})"
+    return text
+
+
 def call_llm(prompt: str, temperature: float = 0.3) -> str:
     """
     Send a prompt to Groq, return the response text.
@@ -89,8 +102,7 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
         )
 
         # response.choices[0].message.content is where Groq puts the text.
-        # Strip removes leading/trailing whitespace from the response.
-        return response.choices[0].message.content.strip()
+        return _reply_text(response)
 
     except RateLimitError:
         # 429 — hit the rate limit. Wait and retry once.
@@ -128,7 +140,7 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
             max_tokens=MAX_TOKENS,
             temperature=temperature,
         )
-        return response.choices[0].message.content.strip()
+        return _reply_text(response)
 
     except Exception as e:
         # Both attempts failed. Return a clean error string.
