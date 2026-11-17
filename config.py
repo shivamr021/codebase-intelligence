@@ -61,14 +61,13 @@ QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY", "")
 QDRANT_METADATA_COLLECTION = "repo_metadata"
 
 # -----------------------------------------------------------------------
-# TMP_DIR
+# TMP_DIR (optional)
 # Where cloned repos are stored temporarily during processing.
-# Uses os.path.join so it works on both Windows (backslash) and Linux (slash).
-# os.path.dirname(__file__) = the folder this config.py file lives in
-# So TMP_DIR always points to /your-project/tmp/ regardless of where
-# you run the server from.
+# Set it to a writable folder when the app folder is read-only; the
+# cloner creates it on first ingest if it does not exist yet.
+# Default: /your-project/tmp/ regardless of where you run the server from.
 # -----------------------------------------------------------------------
-TMP_DIR: str = os.path.join(os.path.dirname(__file__), "tmp")
+TMP_DIR: str = os.getenv("TMP_DIR", "").strip() or os.path.join(os.path.dirname(__file__), "tmp")
 
 # -----------------------------------------------------------------------
 # MAX_FILES
