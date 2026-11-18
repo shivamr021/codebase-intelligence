@@ -1,6 +1,7 @@
 """tests/test_eval_runner.py — P2 eval runner (seam A: evals.run_eval.main on a fixture repo; fake GitHub zip, X1, Qdrant :memory:, fake Groq)."""
 import io, json, zipfile  # noqa: E401
 import requests
+from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 PIN = "a" * 40
 URL = "https://github.com/o/demo"
@@ -22,18 +23,18 @@ def reply(url, status, content):  # a real requests.Response, as requests.get re
 class FakeGitHub:  # api.github.com commit lookup + github.com archive at requests.get; serves `sha` whatever was asked
     def __init__(self, files, sha=PIN, archive_status=200):
         self.files, self.sha, self.archive_status, self.urls = files, sha, archive_status, []
-    def get(self, url, params=None, headers=None, timeout=None, allow_redirects=True):
+    def get(self, url, params=None, **kwargs):
         self.urls.append(url)
         if url.startswith("https://api.github.com/repos/o/demo/commits"):
             body = {"sha": self.sha} if "/commits/" in url else [{"sha": self.sha}]
             return reply(url, 200, json.dumps(body).encode())
         if "/archive/" not in url or self.archive_status != 200:
-            return reply(url, self.archive_status if "/archive/" in url else 404, b"Not Found")
+            return Streamed(self.archive_status if "/archive/" in url else 404, [b"Not Found"])
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:  # GitHub layout: top folder <repo>-<sha>/
             for name, text in self.files.items():
                 zf.writestr(f"demo-{self.sha}/{name}", text)
-        return reply(url, 200, buf.getvalue())
+        return Streamed(200, [buf.getvalue()])
 
 def run_eval(harness, monkeypatch, tmp_path, x2_tokenizer, gold_rows, files=FILES, mode="retrieval", gh=None, extra=()):
     gh = gh or FakeGitHub(files)
