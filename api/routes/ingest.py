@@ -76,6 +76,7 @@ from core.llm.architecture import (
 from core.storage.repo_metadata import (
     save_repo_metadata,
     get_repo_metadata,
+    is_index_compatible,
 )
 
 router = APIRouter()
@@ -304,11 +305,26 @@ async def ingest_repo(request: IngestRequest):
     stored_hashes = existing_metadata.get("file_hashes", {}) if existing_metadata else {}
 
     # ══════════════════════════════════════════════════════════════════
+    # FULL RE-INDEX: asked for with force, or the stored index was built
+    # with another embedding model (old vector name) or an older chunker
+    # (index_version). Neither early path may reuse such an index (AD4).
+    # Nothing is deleted here: embed_and_store() replaces the collection
+    # only after the download succeeded.
+    # ══════════════════════════════════════════════════════════════════
+    full_reindex = bool(existing_metadata) and (
+        request.force or not is_index_compatible(collection_name, existing_metadata)
+    )
+    if full_reindex:
+        reason = "force requested" if request.force else "stored index is not compatible"
+        print(f"[ingest] Full re-index of '{collection_name}': {reason}")
+
+    # ══════════════════════════════════════════════════════════════════
     # FAST PATH: Already up to date — NO download needed
     # We compare SHAs BEFORE calling clone_repo() to save bandwidth.
     # ══════════════════════════════════════════════════════════════════
     if (
-        commit_sha
+        not full_reindex
+        and commit_sha
         and stored_sha
         and commit_sha == stored_sha
     ):
@@ -371,7 +387,7 @@ async def ingest_repo(request: IngestRequest):
         current_hashes = _build_file_hashes(file_list)
 
         # ── Decide: full index or incremental ──────────────────────────
-        if existing_metadata and stored_hashes:
+        if existing_metadata and stored_hashes and not full_reindex:
             # ══════════════════════════════════════════════════════════
             # INCREMENTAL PATH
             # ══════════════════════════════════════════════════════════

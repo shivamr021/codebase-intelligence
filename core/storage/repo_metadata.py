@@ -4,10 +4,12 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
 import hashlib
 
 from config import (
+    EMBEDDING_MODEL,
     QDRANT_URL,
     QDRANT_API_KEY,
     QDRANT_METADATA_COLLECTION,
 )
+from core.ingestion.chunker import INDEX_VERSION, read_index_version
 
 # Separate client so this module is self-contained
 _client = QdrantClient(
@@ -135,3 +137,24 @@ def get_repo_metadata(repo_name: str):
         return None
 
     return results[0].payload
+
+
+def is_index_compatible(collection_name: str, metadata: dict | None) -> bool:
+    """
+    True when the stored index can be reused by the current code (AD4, AD12):
+    the collection's vector name matches the configured embedding model
+    (qdrant-client names it "fast-<model>", e.g. fast-bge-small-en-v1.5),
+    and the stored index_version is not older than INDEX_VERSION.
+    Missing metadata, a missing collection or any lookup error count as
+    not compatible, so the caller re-indexes instead of trusting stale data.
+    """
+    if read_index_version(metadata) < INDEX_VERSION:
+        return False
+
+    expected = f"fast-{EMBEDDING_MODEL.split('/')[-1].lower()}"
+    try:
+        vectors = _client.get_collection(collection_name).config.params.vectors
+    except Exception:
+        return False
+
+    return isinstance(vectors, dict) and expected in vectors
