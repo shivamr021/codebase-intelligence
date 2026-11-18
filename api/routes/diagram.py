@@ -27,7 +27,8 @@ from fastapi import APIRouter, HTTPException
 from api.models import DiagramResponse
 from core.retrieval.retriever import retrieve_all_chunks
 from core.llm.architecture import (
-    generate_architecture
+    generate_architecture,
+    rename_reserved_ids,
 )
 
 from core.storage.repo_metadata import get_repo_metadata
@@ -60,7 +61,7 @@ def get_diagram(repo_name: str):
             status="success",
             repo_name=repo_name,
             summary=cached["summary"],
-            mermaid=cached["mermaid"],
+            mermaid=rename_reserved_ids(cached["mermaid"]),
         )
 
     # Use broad sample for architecture — want overall picture, not specific detail
