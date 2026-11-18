@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 from fastapi import HTTPException
-from qdrant_client import qdrant_fastembed
+import fastembed  # the harness binds the fake model here for both qdrant-client 1.9.1 and 1.20.0
 from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 # Run A ships FILES_A, run B FILES_B: one function per file (no top-level code), one import the graph build reads from disk.
@@ -45,7 +45,7 @@ def bg(fn, *args, **kwargs):  # run fn on its own started thread; the box gets i
 class Boundary:  # wraps FakeTextEmbedding.embed and .passage_embed; tells runs apart by chunk text; records each run's top folder
     def __init__(self, monkeypatch, tmp, plan):  # plan: run -> "pass" | "hold" (wait for go) | "raise" (model crashes)
         self.top, self.at, self.go = {}, {r: threading.Event() for r in plan}, {r: threading.Event() for r in plan}
-        cls, orig = qdrant_fastembed.TextEmbedding, qdrant_fastembed.TextEmbedding.passage_embed
+        cls, orig = fastembed.TextEmbedding, fastembed.TextEmbedding.passage_embed
         def embed(model, documents, **kwargs):
             docs = list(documents)
             for run in [r for r in plan if any(MARK[r] in d for d in docs)]:

@@ -23,6 +23,15 @@ RUN pip install --upgrade pip
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Bake the embedding model into a fixed cache; the app only loads from here and
+# fails at startup if it is missing, never downloads (ruling 4). fastembed 0.9
+# cannot pin a revision by name, so the build fails if the model file changes.
+ENV EMBED_CACHE_DIR=/opt/models
+ARG MODEL_SHA256=51f1bd0addd6e859e42c2c8021a5e5461385bb676a649f4b269aa445449f2431
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5', cache_dir='$EMBED_CACHE_DIR')" \
+    && echo "$MODEL_SHA256  $(ls $EMBED_CACHE_DIR/models--Qdrant--bge-small-en-v1.5-onnx-Q/snapshots/*/model_optimized.onnx)" | sha256sum -c - \
+    && chmod -R a+rX $EMBED_CACHE_DIR
+
 # Copy application code, owned by user 1000 so it can write /app/tmp
 COPY --chown=user . .
 RUN chown user /app

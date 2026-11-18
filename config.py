@@ -113,6 +113,12 @@ GROQ_MAX_TOKENS: int = _int_env("GROQ_MAX_TOKENS", 8192)
 # FastEmbed model shared by the embedder and the retriever.
 EMBEDDING_MODEL: str = _str_env("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
+# Model cache baked into the image at build time; the app never downloads a model (ruling 4).
+EMBED_CACHE_DIR: str = _str_env("EMBED_CACHE_DIR", os.path.join(os.path.dirname(__file__), "models"))
+
+# ONNX threads for the embedding model; 2 fits the 2-vCPU Space (AD7).
+EMBED_THREADS: int = _int_env("EMBED_THREADS", 2)
+
 
 # -----------------------------------------------------------------------
 # STARTUP VALIDATION
@@ -144,3 +150,13 @@ def validate_config() -> None:
     if _INVALID_SETTINGS:
         bad = ", ".join(f"{key}={value!r}" for key, value in _INVALID_SETTINGS.items())
         raise ValueError(f"Invalid environment variables (must be a positive whole number): {bad}")
+
+    # Imported here: both modules read this one, so a top-level import would be circular.
+    from core.embeddings.vectors import require_model_cache
+    from core.storage import repo_metadata
+
+    require_model_cache()  # a missing baked model fails startup, never downloads (ruling 4)
+    try:
+        print(f"Qdrant server version {repo_metadata._client.info().version}")
+    except Exception as e:
+        print(f"Qdrant server version unknown: {type(e).__name__}: {e}")
