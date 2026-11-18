@@ -19,12 +19,12 @@ Enhanced for incremental indexing:
   - Frontend can show "Update available" instead of just hiding the ingest button.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
 from config import QDRANT_URL, QDRANT_API_KEY
 
-from core.ingestion.cloner import extract_owner_repo, fetch_head_commit
+from core.ingestion.cloner import extract_owner_repo, fetch_head_commit, repo_identity
 from core.storage.repo_metadata import get_repo_metadata, is_index_compatible
 
 router = APIRouter()
@@ -52,14 +52,20 @@ def get_client() -> QdrantClient:
 
 
 @router.get("/check")
-def check_repo(repo_name: str, github_url: str | None = None):
+def check_repo(repo_name: str | None = None, github_url: str | None = None):
     """
     Return whether a repo_name collection exists, its chunk count,
     and whether an update is available.
 
+    repo_name is optional: without it the name comes from github_url, by
+    the same rule ingest uses (AD8), so the frontend never builds names.
     If github_url is provided, also checks the current HEAD commit
     against the stored commit SHA to determine if re-indexing is needed.
     """
+    if not repo_name:
+        if not github_url:
+            raise HTTPException(status_code=422, detail="Give repo_name or github_url.")
+        repo_name = repo_identity(*extract_owner_repo(github_url))
     try:
         info = get_client().get_collection(repo_name)
         count = info.points_count or 0

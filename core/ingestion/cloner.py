@@ -166,6 +166,15 @@ def extract_owner_repo(github_url: str):
     return parts[-2], parts[-1]
 
 
+def repo_identity(owner: str, repo: str) -> str:
+    """
+    The one collection name for a GitHub repo (AD8): "owner--repo", lower
+    case, dots kept. GitHub owners never hold "--", so the first "--" splits
+    it; Qdrant allows "-" and "." in collection names.
+    """
+    return f"{owner.lower()}--{repo.lower()}"
+
+
 def validate_github_url(url: str) -> bool:
     pattern = r"^https?://github\.com/[\w\-\.]+/[\w\-\.]+/?$"
     clean_url = url.rstrip("/")
@@ -238,7 +247,7 @@ def resolve_repo(
         "message": f"Resolved '{owner}/{repo}'",
         "owner": owner,
         "repo": repo,
-        "repo_name": repo,
+        "repo_name": repo_identity(owner, repo),
         "commit_sha": resolved_sha,
         "branch": branch,
     }

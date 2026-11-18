@@ -100,18 +100,18 @@ def _build_collection_name(
 
     Examples:
       - repo_name="fastapi", branch=None, commit=None → "fastapi"
-      - repo_name="fastapi", branch="develop"          → "fastapi__develop"
-      - repo_name="fastapi", commit_hash="abc123..."   → "fastapi__abc123de"
+      - repo_name="fastapi", branch="develop"          → "fastapi@develop"
+      - repo_name="fastapi", commit_hash="abc123..."   → "fastapi@abc123de"
 
-    The double-underscore separator avoids collisions with repo names
-    that contain single underscores (common in GitHub).
+    The "@" separator cannot appear in a GitHub owner or repo name, so a
+    versioned name never collides with a plain one; commit wins over branch.
     """
     if commit_hash:
-        return f"{repo_name}__{commit_hash[:8]}"
+        return f"{repo_name}@{commit_hash[:8]}"
     elif branch:
         # Sanitize branch name for Qdrant (no slashes, spaces)
         safe_branch = branch.replace("/", "-").replace(" ", "-")
-        return f"{repo_name}__{safe_branch}"
+        return f"{repo_name}@{safe_branch}"
     return repo_name
 
 
