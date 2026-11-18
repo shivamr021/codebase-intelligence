@@ -5,6 +5,7 @@ import pytest
 import requests
 from fastapi import HTTPException
 from qdrant_client import qdrant_fastembed
+from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 # Run A ships FILES_A, run B FILES_B: one function per file (no top-level code), one import the graph build reads from disk.
 FILES_A = {"app.py": "def master_app():\n    import util\n    return util.helper()\n",
@@ -33,7 +34,7 @@ class FakeGitHub:  # api.github.com + github.com archives behind requests.get; z
         if repo in self.gates:
             self.at[repo].set(), self.gates[repo].wait(10)
         z = self.zips.get(ref, self.zips.get(None)) if self.status == 200 else None
-        return SimpleNamespace(status_code=404 if z is None else 200, content=z or b"Not Found")
+        return Streamed(404 if z is None else 200, [z or b"Not Found"])
 
 def top_with(tmp, name):  # the top-level folder under TMP_DIR holding a file `name`, or None
     return next((os.path.relpath(d, tmp).split(os.sep)[0] for d, _, fs in os.walk(tmp) if name in fs), None)

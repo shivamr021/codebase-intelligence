@@ -1,8 +1,8 @@
 """tests/test_tmp_dir.py — B5: TMP_DIR from env through clone_repo (seam F); requests faked at the HTTP boundary."""
 import io, zipfile  # noqa: E401
-from types import SimpleNamespace
 import pytest
 import requests
+from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 @pytest.mark.parametrize("http, sub, want", [
     pytest.param(200, "x", ("cloned", ["print('hi')\n"]), id="middle-clone-lands-under-tmp-dir"),
@@ -13,7 +13,7 @@ def test_clone_uses_tmp_dir_from_env_and_creates_it(harness, monkeypatch, tmp_pa
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("demo-main/app.py", "print('hi')\n")
-    monkeypatch.setattr(requests, "get", lambda url, **kw: SimpleNamespace(status_code=http, content=buf.getvalue()))
+    monkeypatch.setattr(requests, "get", lambda url, **kw: Streamed(http, [buf.getvalue()]))
     harness.reload("core.ingestion.cloner", env={"TMP_DIR": str(tmp_path / sub)})
     from core.ingestion.cloner import clone_repo
     status = clone_repo("https://github.com/o/demo", "o", "demo")["status"]

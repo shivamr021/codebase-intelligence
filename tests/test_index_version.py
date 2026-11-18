@@ -5,6 +5,7 @@ import pytest
 import requests
 from fastapi.testclient import TestClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
+from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 SHA = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
 APP = "def total(items):\n    count = sum(len(str(item)) for item in items)\n    return count\n"
@@ -17,11 +18,11 @@ class FakeGitHub:  # api.github.com (HEAD sha) plus github.com archives at reque
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("demo-main/app.py", APP)
         self.zip = buf.getvalue()
-    def get(self, url, params=None, headers=None, timeout=None, allow_redirects=True):
+    def get(self, url, params=None, headers=None, timeout=None, allow_redirects=True, stream=False):
         self.urls.append(url)
         if url.startswith("https://api.github.com/"):
             return SimpleNamespace(status_code=200, json=lambda: [{"sha": SHA}], content=b"")
-        return SimpleNamespace(status_code=200 if "/archive/" in url else 404, content=self.zip)
+        return Streamed(200 if "/archive/" in url else 404, [self.zip])
 
 def ingest(harness, monkeypatch, tmp_path, seed=None):
     gh, real_create = FakeGitHub(), harness.groq._create
