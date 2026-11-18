@@ -12,19 +12,18 @@ Key design decision: deterministic point IDs.
   This means the same code chunk always gets the same ID, enabling upserts
   (Qdrant overwrites existing points with matching IDs) and targeted deletes.
 
-Note on _qdrant.add() vs _qdrant.upsert():
-  _qdrant.add() is the FastEmbed-integrated method — it embeds text AND stores.
-  _qdrant.upsert() stores pre-computed vectors. We use add() because we want
-  FastEmbed to handle embedding transparently.
+Vectors come from vector_space (core/embeddings/vectors.py): it owns the model,
+the vector name and the thread count. This file only stores them with upsert().
 """
 
 import hashlib
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
-from qdrant_client.http.models import PayloadSchemaType
+from qdrant_client.http.models import Distance, PayloadSchemaType, PointStruct, VectorParams
 
-from config import EMBEDDING_MODEL, QDRANT_URL, QDRANT_API_KEY
+from config import QDRANT_URL, QDRANT_API_KEY
+from core.embeddings import vectors
 
 _qdrant = QdrantClient(
     url=QDRANT_URL,
@@ -32,16 +31,20 @@ _qdrant = QdrantClient(
     timeout=60,
 )
 
+UPLOAD_GROUP = 100  # points per Qdrant upsert request
 
-def _use_configured_model() -> None:
-    """
-    Load the configured embedding model on first use, never at import (G4).
 
-    Until set_model runs, qdrant-client falls back to its default model and
-    the old vector name, so this runs before every add.
-    """
-    if _qdrant.embedding_model_name != EMBEDDING_MODEL:
-        _qdrant.set_model(EMBEDDING_MODEL)
+def _upload(coll: str, ids: list[str], texts: list[str], payloads: list[dict]) -> None:
+    """Embed and upsert in groups of UPLOAD_GROUP; create the collection when it is missing."""
+    name = vectors.dense_name()
+    for start in range(0, len(ids), UPLOAD_GROUP):
+        end = start + UPLOAD_GROUP
+        group = vectors.passage_vectors(texts[start:end])
+        if start == 0 and not _qdrant.collection_exists(coll):
+            _qdrant.create_collection(coll, vectors_config={
+                name: VectorParams(size=len(group[0]), distance=Distance.COSINE)})
+        _qdrant.upsert(coll, points=[PointStruct(id=i, vector={name: v}, payload=p)
+                                     for i, v, p in zip(ids[start:end], group, payloads[start:end])])
 
 
 def _chunk_id(
@@ -135,8 +138,8 @@ def _delete_if_exists(collection_name: str) -> None:
     Delete a collection if it exists — clean slate for full re-indexing.
     If it doesn't exist, do nothing.
 
-    We DON'T recreate it here — _qdrant.add() creates it automatically
-    with the correct vector params for the FastEmbed model.
+    We DON'T recreate it here — _upload() creates it with the vector name
+    and size of the configured model.
     """
     try:
         existing = [c.name for c in _qdrant.get_collections().collections]
@@ -181,22 +184,15 @@ def embed_and_store(
             "chunks_stored": 0,
         }
 
-    # Delete stale collection — let _qdrant.add() recreate with correct params
+    # Delete stale collection — _upload() recreates it with correct params
     _delete_if_exists(coll)
 
     ids, texts, payloads = _build_ids_and_payloads(chunks, repo_name, commit_hash)
 
     try:
-        print(f"[embedder.py] Embedding {len(chunks)} chunks (first run downloads ~130MB model)...")
+        print(f"[embedder.py] Embedding {len(chunks)} chunks...")
 
-        _use_configured_model()
-        _qdrant.add(
-            collection_name=coll,
-            documents=texts,
-            metadata=payloads,
-            ids=ids,
-            batch_size=100,
-        )
+        _upload(coll, ids, texts, payloads)
 
         # Create payload indexes for efficient filtering and deletes
         _ensure_payload_index(coll)
@@ -249,14 +245,7 @@ def upsert_chunks(
     try:
         print(f"[embedder.py] Upserting {len(chunks)} chunks into '{coll}'...")
 
-        _use_configured_model()
-        _qdrant.add(
-            collection_name=coll,
-            documents=texts,
-            metadata=payloads,
-            ids=ids,
-            batch_size=100,
-        )
+        _upload(coll, ids, texts, payloads)
 
         print(f"[embedder.py] Upserted {len(chunks)} chunks in '{coll}'")
         return {

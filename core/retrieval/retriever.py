@@ -26,11 +26,13 @@ What is top-k retrieval?
   but also more tokens used per request = faster quota exhaustion on Groq.
 """
 
+from fastapi import HTTPException
 from qdrant_client import QdrantClient
-from qdrant_client.http.exceptions import UnexpectedResponse
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
-# Same model as embedder.py (both read config) — see module docstring above
-from config import EMBEDDING_MODEL, QDRANT_URL, QDRANT_API_KEY
+from config import QDRANT_URL, QDRANT_API_KEY
+# Same model and vector name as embedder.py — see module docstring above
+from core.embeddings import vectors
 
 _qdrant = QdrantClient(
     url=QDRANT_URL,
@@ -42,12 +44,6 @@ _qdrant = QdrantClient(
 # 5 chunks × ~750 tokens each = ~3750 tokens of context.
 # Well within Groq's 6000 TPM limit per request.
 DEFAULT_TOP_K = 5
-
-
-def _use_configured_model() -> None:
-    """Load the configured embedding model on first query, never at import (G4)."""
-    if _qdrant.embedding_model_name != EMBEDDING_MODEL:
-        _qdrant.set_model(EMBEDDING_MODEL)
 
 
 def retrieve_chunks(
@@ -79,22 +75,22 @@ def retrieve_chunks(
             "language":   "python",
             "score":      0.87,   ← cosine similarity (0.0 to 1.0)
         }
-        Returns empty list on any error — never raises.
+        Returns an empty list only when the collection does not exist.
+        Any other Qdrant error raises HTTP 503 (chained to the client error),
+        so a broken store never poses as "not indexed" (404).
     """
     coll = collection_name or repo_name
 
     # First check the collection exists
     try:
-        existing = [c.name for c in _qdrant.get_collections().collections]
-        if coll not in existing:
+        if not _qdrant.collection_exists(coll):
             print(
                 f"[retriever.py] Collection '{coll}' not found. "
                 f"Has this repo been ingested yet?"
             )
             return []
-    except Exception as e:
-        print(f"[retriever.py] Cannot connect to Qdrant: {e}")
-        return []
+    except (ResponseHandlingException, UnexpectedResponse) as e:
+        raise _store_down(e) from e
 
     # Build optional filter for commit_hash
     query_filter = None
@@ -111,20 +107,20 @@ def retrieve_chunks(
 
     # Perform semantic search
     try:
-        _use_configured_model()
-        results = _qdrant.query(
+        results = _qdrant.query_points(
             collection_name=coll,
-            query_text=query,
+            query=vectors.query_vector(query),
+            using=vectors.dense_name(),
             query_filter=query_filter,
             limit=top_k,
-        )
+            with_payload=True,
+        ).points
 
-        # results is a list of QueryResponse objects.
-        # Each has: .id, .score, .metadata (our payload)
+        # Each point has: .id, .score, .payload (what we stored)
         chunks = []
         for result in results:
-            # result.metadata contains everything we stored in the payload
-            chunk = dict(result.metadata)
+            # Drop "document": qdrant-client 1.9.1 also stored the text there
+            chunk = {k: v for k, v in result.payload.items() if k != "document"}
 
             # Add the similarity score — useful for debugging and
             # for filtering low-quality results
@@ -137,12 +133,14 @@ def retrieve_chunks(
         )
         return chunks
 
-    except UnexpectedResponse as e:
-        print(f"[retriever.py] Qdrant search error: {e}")
-        return []
-    except Exception as e:
-        print(f"[retriever.py] Unexpected retrieval error: {e}")
-        return []
+    except (ResponseHandlingException, UnexpectedResponse) as e:
+        raise _store_down(e) from e
+
+
+def _store_down(e: Exception) -> HTTPException:
+    """Qdrant unreachable or refusing: HTTP 503, never "not indexed" (404). main.py is sealed, so no handler there."""
+    print(f"[retriever.py] Qdrant error: {e}")
+    return HTTPException(status_code=503, detail=f"Vector store unavailable: {type(e).__name__}")
 
 
 def retrieve_all_chunks(repo_name: str, limit: int = 50) -> list[dict]:

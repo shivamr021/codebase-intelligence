@@ -1,10 +1,10 @@
 """tests/test_architecture_ok.py — B3b (AD13), seam C: ingest twice on the one harness store; fakes from test_llm_failures."""
 from fastapi.testclient import TestClient
-from qdrant_client import qdrant_fastembed
+import fastembed
 from test_llm_failures import FILES, GOOD_ARCH, NOT_FOUND, SHA1, SHA2, api, github, groq, ingest, stored  # noqa: F401
 
 def embeds(monkeypatch):  # wraps the TB1 fake model's embed (also bound as passage_embed, which add() calls); logs each call
-    fake, calls = qdrant_fastembed.TextEmbedding, []
+    fake, calls = fastembed.TextEmbedding, []  # the harness binds the fake here for both qdrant-client 1.9.1 and 1.20.0
     inner = fake.embed
     def counted(self, documents, **kwargs):
         calls.append(1)

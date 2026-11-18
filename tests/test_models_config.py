@@ -1,6 +1,6 @@
 """tests/test_models_config.py — B1b: model names and token limit from env (seams E, A, D)."""
 import pytest
-from qdrant_client import QdrantClient, models as qm
+from qdrant_client import models as qm
 
 @pytest.mark.parametrize("env, sent", [
     pytest.param({}, ("openai/gpt-oss-120b", 8192), id="middle-defaults"),
@@ -29,22 +29,31 @@ def test_non_numeric_token_limit_fails_startup_naming_the_variable(harness, valu
                  id="edge-model-env"),
 ])
 def test_import_loads_no_model_then_both_clients_use_the_configured_one(harness, env, model, vector, size):
-    # Break: set_model at import (130 MB download per run), or a client never calls it -> library default bge-small-en.
+    # Break: model loaded at import (130 MB download per run), or a client ignores the configured model -> another
+    # vector name or size is stored, or the query asks a vector the collection lacks and finds nothing.
     harness.reload("core.embeddings.embedder", "core.retrieval.retriever", env=env)
     assert harness.loads == []
-    harness.patch("core.embeddings.embedder", emb_store := QdrantClient(":memory:"))  # seam A exception: own stores
-    harness.patch("core.retrieval.retriever", ret_store := QdrantClient(":memory:"))
-    ret_store.create_collection("demo", vectors_config={vector: qm.VectorParams(size=size, distance=qm.Distance.COSINE)})
     from core.embeddings.embedder import embed_and_store
     from core.retrieval.retriever import retrieve_chunks
     embed_and_store(harness.chunks, "demo")
-    retrieve_chunks("alpha", "demo")
-    assert (emb_store.embedding_model_name, ret_store.embedding_model_name, harness.loads) == (model, model, [model])
+    vectors = harness.store.get_collection("demo").config.params.vectors
+    assert ({k: v.size for k, v in vectors.items()}, len(retrieve_chunks("alpha", "demo")), harness.loads) == (
+        {vector: size}, 2, [model])
 
 def test_first_upsert_into_existing_v15_collection_uses_its_vector_name(harness):
-    # Break: vector name looked up before set_model -> "fast-bge-small-en" rejected by the stored collection.
+    # Break: vector name taken before the configured model is used -> "fast-bge-small-en" rejected by the collection.
     harness.store.create_collection("demo", vectors_config={
         "fast-bge-small-en-v1.5": qm.VectorParams(size=384, distance=qm.Distance.COSINE)})
     from core.embeddings.embedder import upsert_chunks
     assert upsert_chunks(harness.chunks, "demo") == {"status": "success", "repo_name": "demo", "chunks_stored": 2}
     assert harness.store.count("demo").count == 2
+
+def test_missing_baked_model_cache_fails_startup_and_downloads_nothing(harness, tmp_path):
+    # P7-B4 new (ruling 4). Break: startup never checks the cache -> first query silently downloads the 130 MB model.
+    from fastapi.testclient import TestClient
+    harness.reload("core.embeddings.embedder", "core.retrieval.retriever", "main", env={"EMBED_CACHE_DIR": str(tmp_path)})
+    with pytest.raises(Exception) as raised:
+        with TestClient(__import__("main").app):
+            pass
+    text = str(raised.value)
+    assert (str(tmp_path) in text, "BAAI/bge-small-en-v1.5" in text, harness.downloads) == (True, True, [])
