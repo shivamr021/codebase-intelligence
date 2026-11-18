@@ -6,7 +6,10 @@ Returns: {
     "indexed": true,
     "chunks": 37,
     "commit_sha": "abc123...",
-    "needs_update": true
+    "needs_update": true,
+    "compatible": true,
+    "files_indexed": 12,
+    "graph_ready": true
 }
 
 Enhanced for incremental indexing:
@@ -22,9 +25,21 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 from config import QDRANT_URL, QDRANT_API_KEY
 
 from core.ingestion.cloner import extract_owner_repo, fetch_head_commit
-from core.storage.repo_metadata import get_repo_metadata
+from core.storage.repo_metadata import get_repo_metadata, is_index_compatible
 
 router = APIRouter()
+
+
+def _not_indexed() -> dict:
+    return {
+        "indexed": False,
+        "chunks": 0,
+        "commit_sha": None,
+        "needs_update": False,
+        "compatible": False,
+        "files_indexed": 0,
+        "graph_ready": False,
+    }
 
 _qdrant: QdrantClient | None = None
 
@@ -50,26 +65,23 @@ async def check_repo(repo_name: str, github_url: str | None = None):
         count = info.points_count or 0
         indexed = count > 0
     except (UnexpectedResponse, Exception):
-        return {
-            "indexed": False,
-            "chunks": 0,
-            "commit_sha": None,
-            "needs_update": False,
-        }
+        return _not_indexed()
 
     if not indexed:
-        return {
-            "indexed": False,
-            "chunks": 0,
-            "commit_sha": None,
-            "needs_update": False,
-        }
+        return _not_indexed()
 
-    # Fetch stored commit SHA from metadata
-    stored_sha = None
-    metadata = get_repo_metadata(repo_name)
-    if metadata:
-        stored_sha = metadata.get("commit_sha")
+    # Fetch stored metadata. A failing read must never turn /check into a
+    # 500 (I1): treat it as "no metadata" — no files, no graph.
+    try:
+        metadata = get_repo_metadata(repo_name) or {}
+    except Exception:
+        metadata = {}
+    stored_sha = metadata.get("commit_sha")
+    files_indexed = len(metadata.get("file_hashes") or {})
+    # The graph is saved even when the architecture step failed (AD13).
+    graph_ready = bool(metadata.get("graph_data"))
+    # Same rule ingest uses to force a full re-index (AD4, AD12).
+    compatible = bool(metadata) and is_index_compatible(repo_name, metadata)
 
     # If github_url provided, compare against current HEAD
     needs_update = False
@@ -87,4 +99,7 @@ async def check_repo(repo_name: str, github_url: str | None = None):
         "chunks": count,
         "commit_sha": stored_sha,
         "needs_update": needs_update,
+        "compatible": compatible,
+        "files_indexed": files_indexed,
+        "graph_ready": graph_ready,
     }
