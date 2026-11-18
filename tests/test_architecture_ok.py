@@ -40,10 +40,13 @@ def test_next_ingest_at_same_sha_reruns_only_the_architecture(api, harness, monk
 
 def test_old_metadata_without_the_flag_counts_as_ok_and_keeps_the_fast_path(api, harness, monkeypatch):
     # edge, existing. Break: ingest.py:257 condition `False`, or a missing flag read as false -> re-download.
-    from qdrant_client.models import PointStruct
+    from qdrant_client.models import Distance, PointStruct, VectorParams
+    # the stored "demo" index under the current model's vector name (config.py:114), so the compatibility check passes
+    harness.store.create_collection("demo", vectors_config={"fast-bge-small-en-v1.5": VectorParams(size=384, distance=Distance.COSINE)})
     harness.store.upsert("repo_metadata", [PointStruct(id=1, vector=[0.0], payload={  # a record saved before B3b
         "repo_name": "demo", "summary": "Old summary.", "mermaid": "flowchart TD\nX-->Y", "graph_stats": {},
-        "graph_data": {}, "architecture_context": None, "commit_sha": SHA1, "file_hashes": {"app.py": "h1"}})])
+        "graph_data": {}, "architecture_context": None, "commit_sha": SHA1, "file_hashes": {"app.py": "h1"},
+        "index_version": 2})])
     server, urls = groq(monkeypatch), github(monkeypatch, SHA1)
     body = ingest(api).json()
     assert (sum("/archive/" in u for u in urls), len(server.requests), "already up to date" in body["message"]) == (0, 0, True)

@@ -124,5 +124,6 @@ def test_force_with_failed_download_returns_400_and_keeps_old_index(harness, ing
     seed(harness)
     r = ingest(gh := FakeGitHub(OLD, archive=404), force=True)
     meta = harness.store.retrieve("repo_metadata", [hashlib.md5(b"demo").hexdigest()])[0].payload
-    assert (r.status_code, len(gh.archives), meta["commit_sha"]) == (400, 2, OLD)
+    # archive order and count are B7's (tests/test_cloner_download.py:65-82); here only "a download was tried"
+    assert (r.status_code, len(gh.archives) >= 1, meta["commit_sha"]) == (400, True, OLD)
     assert stored(harness)[0] == {("src/alpha.py", OLD), ("src/beta.py", OLD)}

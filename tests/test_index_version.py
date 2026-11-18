@@ -34,6 +34,8 @@ def ingest(harness, monkeypatch, tmp_path, seed=None):
     monkeypatch.setattr("core.ingestion.cloner.TMP_DIR", str(tmp_path), raising=False)
     if seed is not None:  # metadata as a previous ingest left it, written straight to the store
         harness.store.create_collection("repo_metadata", vectors_config=VectorParams(size=1, distance=Distance.COSINE))
+        # the stored "demo" index, under the current model's vector name (config.py:114), so only the version can differ
+        harness.store.create_collection("demo", vectors_config={"fast-bge-small-en-v1.5": VectorParams(size=384, distance=Distance.COSINE)})
         payload = {"repo_name": "demo", "summary": "old summary", "mermaid": "flowchart TD\nA-->B", "graph_stats": {},
                    "graph_data": {}, "architecture_context": None, **seed}
         harness.store.upsert("repo_metadata", [PointStruct(id=hashlib.md5(b"demo").hexdigest(), vector=[0.0], payload=payload)])
@@ -51,22 +53,22 @@ def test_full_ingest_stores_index_version_2(harness, monkeypatch, tmp_path):
     assert (response.status_code, response.json()["incremental"]) == (200, False)
     assert stored_version(harness) == 2
 
-def test_fast_path_same_sha_leaves_stored_version_1_and_downloads_nothing(harness, monkeypatch, tmp_path):
+def test_fast_path_same_sha_leaves_stored_version_unchanged_and_downloads_nothing(harness, monkeypatch, tmp_path):
     # Break: fast path skipped (`ingest.py:260` -> False), archive fetched and payload rewritten without index_version.
-    response, gh = ingest(harness, monkeypatch, tmp_path, seed={"commit_sha": SHA, "file_hashes": {"app.py": "0" * 64}, "index_version": 1})
+    response, gh = ingest(harness, monkeypatch, tmp_path, seed={"commit_sha": SHA, "file_hashes": {"app.py": "0" * 64}, "index_version": 2})
     assert (response.status_code, [u for u in gh.urls if "/archive/" in u]) == (200, [])
-    assert stored_version(harness) == 1
+    assert stored_version(harness) == 2
 
 @pytest.mark.parametrize("stored_hash", [
     pytest.param("0" * 64, id="file-modified"),  # ingest.py:404-407 rewrites via _run_graph_and_architecture
     pytest.param(hashlib.sha256(APP.encode()).hexdigest(), id="content-unchanged"),  # ingest.py:339-348
 ])
-def test_incremental_ingest_leaves_stored_version_1(harness, monkeypatch, tmp_path, stored_hash):
-    # Break: the incremental save drops index_version (today), or stamps 2 on chunks it never rebuilt.
-    seed = {"commit_sha": "0123456789abcdef0123456789abcdef01234567", "file_hashes": {"app.py": stored_hash}, "index_version": 1}
+def test_incremental_ingest_leaves_stored_version_unchanged(harness, monkeypatch, tmp_path, stored_hash):
+    # Break: the incremental save drops index_version (today), or overwrites the stored version it never rebuilt.
+    seed = {"commit_sha": "0123456789abcdef0123456789abcdef01234567", "file_hashes": {"app.py": stored_hash}, "index_version": 2}
     response, _ = ingest(harness, monkeypatch, tmp_path, seed=seed)
     assert (response.status_code, response.json()["incremental"]) == (200, True)
-    assert stored_version(harness) == 1
+    assert stored_version(harness) == 2
 
 def read(metadata):
     from core.ingestion.chunker import read_index_version  # B2b's new name; imported here so one missing name reds only these
