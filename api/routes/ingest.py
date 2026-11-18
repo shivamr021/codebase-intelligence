@@ -366,6 +366,7 @@ async def ingest_repo(request: IngestRequest):
         )
 
     local_path = clone_result["local_path"]
+    work_dir = clone_result["work_dir"]  # this run's own folder (AD11)
     print(f"[ingest] Cloned '{repo_name}' to {local_path}")
 
     try:
@@ -563,8 +564,9 @@ async def ingest_repo(request: IngestRequest):
         # ── Cleanup: remove cloned repo from disk ──────────────────────
         # Always runs — even if an exception was raised above.
         # This prevents disk accumulation on Railway even after errors.
+        # Deletes only this run's folder, never another run's (AD11).
         try:
-            shutil.rmtree(local_path, onerror=_force_remove_readonly)
-            print(f"[ingest] Cleaned up {local_path}")
+            shutil.rmtree(work_dir, onerror=_force_remove_readonly)
+            print(f"[ingest] Cleaned up {work_dir}")
         except Exception:
             pass  # cleanup failure is non-critical

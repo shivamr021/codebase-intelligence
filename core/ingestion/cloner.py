@@ -266,13 +266,13 @@ def clone_repo(
     """
 
     repo_name = repo
-    local_path = os.path.join(TMP_DIR, repo_name)
 
-    # Clean previous download
-    if os.path.exists(local_path):
-        shutil.rmtree(local_path, onerror=_force_remove_readonly)
-
+    # Each run gets its own folder (AD11): two ingests of the same repo name
+    # (other branch, other owner) never share or wipe each other's files.
+    # The caller deletes work_dir when it is done; on error we delete it here.
     os.makedirs(TMP_DIR, exist_ok=True)
+    work_dir = tempfile.mkdtemp(prefix=f"{repo_name}-", dir=TMP_DIR)
+    cloned = False
 
     # Build the correct archive URL based on what was requested
     base = f"https://github.com/{owner}/{repo}/archive"
@@ -321,22 +321,15 @@ def clone_repo(
 
         print(f"[cloner.py] Downloaded {len(response.content) / 1024:.1f} KB, extracting...")
 
-        # Extract zip
+        # Extract zip into this run's own folder
         with zipfile.ZipFile(zip_path, "r") as zf:
             # GitHub zips have a top-level folder like "repo-main/" or "repo-master/"
             names = zf.namelist()
             top_level = names[0].split("/")[0]  # e.g. "flask-boilerplate-main"
+            zf.extractall(work_dir)
 
-            extract_tmp = os.path.join(TMP_DIR, f"_extract_{repo_name}")
-            if os.path.exists(extract_tmp):
-                shutil.rmtree(extract_tmp, onerror=_force_remove_readonly)
-
-            zf.extractall(extract_tmp)
-
-        # Move the inner folder to the expected local_path
-        inner_path = os.path.join(extract_tmp, top_level)
-        shutil.move(inner_path, local_path)
-        shutil.rmtree(extract_tmp, onerror=_force_remove_readonly)
+        local_path = os.path.join(work_dir, top_level)
+        cloned = True
 
         print(f"[cloner.py] ✅ Successfully extracted '{repo_name}' to {local_path}")
         return {
@@ -344,6 +337,7 @@ def clone_repo(
             "message": f"Successfully downloaded '{repo_name}'",
             "repo_name": repo_name,
             "local_path": local_path,
+            "work_dir": work_dir,
         }
 
     except requests.Timeout:
@@ -368,3 +362,5 @@ def clone_repo(
                 os.unlink(zip_path)
             except Exception:
                 pass
+        if not cloned:
+            shutil.rmtree(work_dir, onerror=_force_remove_readonly)
