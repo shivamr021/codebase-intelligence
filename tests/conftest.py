@@ -1,5 +1,6 @@
 """tests/conftest.py — shared harness (B1a): one in-memory Qdrant, dummy env, fake Groq server, fake model loader."""
 import importlib
+import re
 from types import SimpleNamespace
 import dotenv
 import numpy as np
@@ -31,6 +32,36 @@ class FakeGroq:  # the Groq server behind OpenAI(...).chat.completions: records 
         self.requests.append(kwargs)
         choice = Choice(index=0, finish_reason="stop", message=ChatCompletionMessage(role="assistant", content="fake reply"))
         return ChatCompletion(id="chatcmpl-1", object="chat.completion", created=0, model=kwargs["model"], choices=[choice])
+
+X1_VOCAB = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mike")
+
+class WordEmbedding(FakeTextEmbedding):  # X1: vector = count of each X1_VOCAB word in the text, plus 1.0 in the last dim
+    def _vec(self, text):
+        v = np.zeros(self.dim)
+        v[-1] = 1.0
+        for word in re.findall(r"[a-z]+", text.lower()):
+            if word in X1_VOCAB:
+                v[X1_VOCAB.index(word)] += 1.0
+        return v
+    embed = passage_embed = lambda self, documents, **kwargs: (self._vec(d) for d in documents)  # noqa: E731
+    query_embed = lambda self, query, **kwargs: self.embed([query])  # noqa: E731
+
+@pytest.fixture
+def x1_model(harness, monkeypatch):  # opt-in X1; the default fake stays for every other test
+    monkeypatch.setattr(qdrant_fastembed, "TextEmbedding", WordEmbedding)
+    monkeypatch.setattr(qdrant_fastembed.QdrantFastembedMixin, "embedding_models", {})
+    return WordEmbedding
+
+@pytest.fixture
+def x2_tokenizer(tmp_path):  # X2: word-level tokenizer.json, one token per whitespace word, plus [CLS] and [SEP]
+    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+    tok = Tokenizer(models.WordLevel(vocab={"[UNK]": 0, "[CLS]": 1, "[SEP]": 2}, unk_token="[UNK]"))
+    tok.pre_tokenizer = pre_tokenizers.WhitespaceSplit()
+    tok.post_processor = processors.TemplateProcessing(single="[CLS] $A [SEP]", special_tokens=[("[CLS]", 1), ("[SEP]", 2)])
+    path = tmp_path / "model" / "tokenizer.json"
+    path.parent.mkdir(exist_ok=True)
+    tok.save(str(path))
+    return path
 
 @pytest.fixture
 def shell_env():  # env already in the shell before the harness runs; a test overrides it by parametrizing "shell_env"
