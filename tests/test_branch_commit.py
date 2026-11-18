@@ -56,29 +56,29 @@ class TestCollectionNaming:
         assert self.build("fastapi") == "fastapi"
 
     def test_with_branch(self):
-        """Branch → repo__branch."""
-        assert self.build("fastapi", branch="develop") == "fastapi__develop"
+        """Branch → repo@branch."""
+        assert self.build("fastapi", branch="develop") == "fastapi@develop"
 
     def test_with_commit_hash(self):
-        """Commit → repo__<first 8 chars>."""
+        """Commit → repo@<first 8 chars>."""
         sha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-        assert self.build("fastapi", commit_hash=sha) == "fastapi__a1b2c3d4"
+        assert self.build("fastapi", commit_hash=sha) == "fastapi@a1b2c3d4"
 
     def test_commit_takes_precedence_over_branch(self):
         """If both provided (shouldn't happen), commit wins."""
         sha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
         result = self.build("fastapi", branch="develop", commit_hash=sha)
-        assert result == "fastapi__a1b2c3d4"
+        assert result == "fastapi@a1b2c3d4"
 
     def test_branch_with_slashes_sanitized(self):
         """Branch names with slashes get sanitized for Qdrant."""
         result = self.build("fastapi", branch="feature/auth-login")
-        assert result == "fastapi__feature-auth-login"
+        assert result == "fastapi@feature-auth-login"
 
     def test_branch_with_spaces_sanitized(self):
         """Branch names with spaces get sanitized."""
         result = self.build("fastapi", branch="my branch")
-        assert result == "fastapi__my-branch"
+        assert result == "fastapi@my-branch"
 
 
 # -----------------------------------------------------------------------

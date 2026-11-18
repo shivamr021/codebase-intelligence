@@ -16,6 +16,7 @@ FRESH = {("app.py", OLD), ("util.py", OLD)}  # (file_path, commit_hash) of every
 CHANGED = {**FILES, "util.py": BODY.format("beta", 3)}  # NEW commit: util.py modified, app.py same
 AT_NEW = {("app.py", NEW), ("util.py", NEW)}
 CUR_VEC = {"fast-bge-small-en-v1.5"}  # vector name once B1b sets the model (PROOF-blueprint.md:63)
+NAME = "o--demo"  # AD8 collection and metadata name for https://github.com/o/demo (owner--repo)
 
 class FakeGitHub:  # api.github.com + github.com archives behind requests.get: records every URL
     def __init__(self, sha, archive=200, files=FILES):
@@ -38,24 +39,24 @@ def arch_reply(**kwargs):  # a valid architecture answer, so the metadata save n
                           choices=[Choice(index=0, finish_reason="stop", message=msg)])
 
 def seed(h, sha=OLD, vector=None, version=2, hashes=HASHES):
-    # Stored index for "demo": vector=None -> the app's own embed_and_store (current name); else a raw old collection.
+    # Stored index for "o--demo": vector=None -> the app's own embed_and_store (current name); else a raw old collection.
     if vector:
-        h.store.create_collection("demo", vectors_config={vector: qm.VectorParams(size=384, distance=qm.Distance.COSINE)})
-        h.store.upsert("demo", [qm.PointStruct(id=i, vector={vector: [0.1] * 384}, payload={**c, "commit_hash": sha})
-                                for i, c in enumerate(h.chunks)])
+        h.store.create_collection(NAME, vectors_config={vector: qm.VectorParams(size=384, distance=qm.Distance.COSINE)})
+        h.store.upsert(NAME, [qm.PointStruct(id=i, vector={vector: [0.1] * 384}, payload={**c, "commit_hash": sha})
+                              for i, c in enumerate(h.chunks)])
     else:
         from core.embeddings.embedder import embed_and_store
-        embed_and_store(h.chunks, "demo", commit_hash=sha)
+        embed_and_store(h.chunks, NAME, commit_hash=sha)
     from core.storage.repo_metadata import ensure_metadata_collection
     ensure_metadata_collection()
-    payload = {"repo_name": "demo", "summary": "s", "mermaid": "flowchart TD\nA-->B", "graph_stats": {"nodes": 2},
+    payload = {"repo_name": NAME, "summary": "s", "mermaid": "flowchart TD\nA-->B", "graph_stats": {"nodes": 2},
                "graph_data": {"nodes": ["app.py", "util.py"], "edges": []}, "architecture_context": None,
                "commit_sha": sha, "file_hashes": hashes, **({} if version is None else {"index_version": version})}
-    h.store.upsert("repo_metadata", [qm.PointStruct(id=hashlib.md5(b"demo").hexdigest(), vector=[0.0], payload=payload)])
+    h.store.upsert("repo_metadata", [qm.PointStruct(id=hashlib.md5(NAME.encode()).hexdigest(), vector=[0.0], payload=payload)])
 
-def stored(h):  # (file_path, commit_hash) of every point in "demo", plus its vector names
-    points = h.store.scroll("demo", limit=100, with_payload=True)[0]
-    vectors = h.store.get_collection("demo").config.params.vectors
+def stored(h):  # (file_path, commit_hash) of every point in "o--demo", plus its vector names
+    points = h.store.scroll(NAME, limit=100, with_payload=True)[0]
+    vectors = h.store.get_collection(NAME).config.params.vectors
     return {(p.payload["file_path"], p.payload.get("commit_hash")) for p in points}, set(vectors)
 
 @pytest.fixture
@@ -123,7 +124,7 @@ def test_force_with_failed_download_returns_400_and_keeps_old_index(harness, ing
     # Break: force ignored -> fast path 200 (seeded SHA == served SHA); or force wipes index/metadata before clone fails.
     seed(harness)
     r = ingest(gh := FakeGitHub(OLD, archive=404), force=True)
-    meta = harness.store.retrieve("repo_metadata", [hashlib.md5(b"demo").hexdigest()])[0].payload
+    meta = harness.store.retrieve("repo_metadata", [hashlib.md5(NAME.encode()).hexdigest()])[0].payload
     # archive order and count are B7's (tests/test_cloner_download.py:65-82); here only "a download was tried"
     assert (r.status_code, len(gh.archives) >= 1, meta["commit_sha"]) == (400, True, OLD)
     assert stored(harness)[0] == {("src/alpha.py", OLD), ("src/beta.py", OLD)}

@@ -41,10 +41,10 @@ def test_next_ingest_at_same_sha_reruns_only_the_architecture(api, harness, monk
 def test_old_metadata_without_the_flag_counts_as_ok_and_keeps_the_fast_path(api, harness, monkeypatch):
     # edge, existing. Break: ingest.py:257 condition `False`, or a missing flag read as false -> re-download.
     from qdrant_client.models import Distance, PointStruct, VectorParams
-    # the stored "demo" index under the current model's vector name (config.py:114), so the compatibility check passes
-    harness.store.create_collection("demo", vectors_config={"fast-bge-small-en-v1.5": VectorParams(size=384, distance=Distance.COSINE)})
+    # the stored "o--demo" index (AD8 name for o/demo) under the current model's vector name (config.py:114), so the compatibility check passes
+    harness.store.create_collection("o--demo", vectors_config={"fast-bge-small-en-v1.5": VectorParams(size=384, distance=Distance.COSINE)})
     harness.store.upsert("repo_metadata", [PointStruct(id=1, vector=[0.0], payload={  # a record saved before B3b
-        "repo_name": "demo", "summary": "Old summary.", "mermaid": "flowchart TD\nX-->Y", "graph_stats": {},
+        "repo_name": "o--demo", "summary": "Old summary.", "mermaid": "flowchart TD\nX-->Y", "graph_stats": {},
         "graph_data": {}, "architecture_context": None, "commit_sha": SHA1, "file_hashes": {"app.py": "h1"},
         "index_version": 2})])
     server, urls = groq(monkeypatch), github(monkeypatch, SHA1)

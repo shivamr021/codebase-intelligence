@@ -8,6 +8,7 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 
 SHA = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
 APP = "def total(items):\n    count = sum(len(str(item)) for item in items)\n    return count\n"
+NAME = "o--demo"  # AD8 collection and metadata name for https://github.com/o/demo (owner--repo)
 REPLY = "SUMMARY: one module app.py that totals item lengths.\n```mermaid\nflowchart TD\nA[app.py] --> B[total]\n```"
 
 class FakeGitHub:  # api.github.com (HEAD sha) plus github.com archives at requests.get; records every URL asked
@@ -34,17 +35,17 @@ def ingest(harness, monkeypatch, tmp_path, seed=None):
     monkeypatch.setattr("core.ingestion.cloner.TMP_DIR", str(tmp_path), raising=False)
     if seed is not None:  # metadata as a previous ingest left it, written straight to the store
         harness.store.create_collection("repo_metadata", vectors_config=VectorParams(size=1, distance=Distance.COSINE))
-        # the stored "demo" index, under the current model's vector name (config.py:114), so only the version can differ
-        harness.store.create_collection("demo", vectors_config={"fast-bge-small-en-v1.5": VectorParams(size=384, distance=Distance.COSINE)})
-        payload = {"repo_name": "demo", "summary": "old summary", "mermaid": "flowchart TD\nA-->B", "graph_stats": {},
+        # the stored "o--demo" index, under the current model's vector name (config.py:114), so only the version can differ
+        harness.store.create_collection(NAME, vectors_config={"fast-bge-small-en-v1.5": VectorParams(size=384, distance=Distance.COSINE)})
+        payload = {"repo_name": NAME, "summary": "old summary", "mermaid": "flowchart TD\nA-->B", "graph_stats": {},
                    "graph_data": {}, "architecture_context": None, **seed}
-        harness.store.upsert("repo_metadata", [PointStruct(id=hashlib.md5(b"demo").hexdigest(), vector=[0.0], payload=payload)])
+        harness.store.upsert("repo_metadata", [PointStruct(id=hashlib.md5(NAME.encode()).hexdigest(), vector=[0.0], payload=payload)])
     from main import app
     return TestClient(app).post("/api/v1/ingest", json={"github_url": "https://github.com/o/demo"}), gh
 
 def stored_version(harness):  # raw payload key, never through a reader that maps missing to 1
     points, _ = harness.store.scroll("repo_metadata", limit=10)
-    assert [p.payload["repo_name"] for p in points] == ["demo"]
+    assert [p.payload["repo_name"] for p in points] == ["o--demo"]
     return points[0].payload.get("index_version", "MISSING")
 
 def test_full_ingest_stores_index_version_2(harness, monkeypatch, tmp_path):
