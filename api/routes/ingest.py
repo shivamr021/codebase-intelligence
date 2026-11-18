@@ -30,6 +30,7 @@ Graph rebuild on incremental update:
 
 import shutil
 import stat
+import threading
 from fastapi import APIRouter, HTTPException
 from core.llm.context_selector import (
     select_architecture_chunks,
@@ -236,6 +237,15 @@ def _retry_architecture(collection_name, metadata, commit_sha, file_hashes) -> b
     return architecture_ok
 
 
+# -----------------------------------------------------------------------
+# One ingest per collection at a time (AD6). Different collections run
+# side by side; a second ingest of a busy collection gets 409 at once.
+# Routes are plain `def`, so FastAPI runs each one in its thread pool.
+# -----------------------------------------------------------------------
+_busy_collections: set[str] = set()
+_busy_lock = threading.Lock()
+
+
 @router.post(
     "/ingest",
     response_model=IngestResponse,
@@ -247,7 +257,7 @@ def _retry_architecture(collection_name, metadata, commit_sha, file_hashes) -> b
         "to index a specific version."
     ),
 )
-async def ingest_repo(request: IngestRequest):
+def ingest_repo(request: IngestRequest):
     """
     Full ingestion pipeline for a GitHub repository.
 
@@ -299,6 +309,22 @@ async def ingest_repo(request: IngestRequest):
     print(f"[ingest] Commit: {commit_sha[:12] + '...' if commit_sha else 'unknown'}")
     print(f"[ingest] Collection: '{collection_name}'")
 
+    with _busy_lock:
+        if collection_name in _busy_collections:
+            raise HTTPException(
+                status_code=409,
+                detail=f"'{collection_name}' is already being indexed. Try again when it finishes.",
+            )
+        _busy_collections.add(collection_name)
+    try:
+        return _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_name)
+    finally:
+        with _busy_lock:
+            _busy_collections.discard(collection_name)
+
+
+def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_name):
+    """Phases 1b-5 of ingest_repo, run while this collection's lock is held."""
     # Check if this version has been indexed before
     existing_metadata = get_repo_metadata(collection_name)
     stored_sha = existing_metadata.get("commit_sha") if existing_metadata else None

@@ -76,7 +76,7 @@ def _parse_bug_json(llm_response: str) -> list[dict]:
     summary="Detect bugs and code issues",
     description="Analyse the codebase for bugs, code smells, and issues using LLM review.",
 )
-async def detect_bugs(repo_name: str):
+def detect_bugs(repo_name: str):
     """
     Broad-coverage bug detection across the indexed codebase.
     Returns up to 10 issues sorted by severity.

@@ -52,7 +52,7 @@ def get_client() -> QdrantClient:
 
 
 @router.get("/check")
-async def check_repo(repo_name: str, github_url: str | None = None):
+def check_repo(repo_name: str, github_url: str | None = None):
     """
     Return whether a repo_name collection exists, its chunk count,
     and whether an update is available.

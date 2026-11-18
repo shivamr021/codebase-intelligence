@@ -27,7 +27,7 @@ router = APIRouter()
     summary="Ask a question about the codebase",
     description="Retrieve relevant code chunks and generate an LLM answer with file citations.",
 )
-async def ask_question(request: AskRequest):
+def ask_question(request: AskRequest):
     """
     Semantic search + LLM answer for any question about the codebase.
 
