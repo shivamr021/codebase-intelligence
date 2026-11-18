@@ -28,7 +28,11 @@ verifiable and make the system feel trustworthy.
 # Used by: api/routes/query.py
 # Task: Answer a natural language question about the codebase
 # -----------------------------------------------------------------------
-ANSWER_QUESTION = """You are an expert software engineer analysing a codebase.
+# The fixed refusal sentence ANSWER_QUESTION asks for. /ask flags a reply
+# as refused only when it is exactly this sentence (owner ruling 5).
+REFUSAL_SENTENCE = "I cannot find enough information in the indexed code to answer this."
+
+ANSWER_QUESTION ="""You are an expert software engineer analysing a codebase.
 
 Below are the most relevant code chunks retrieved from the repository,
 along with their file paths and line numbers:

@@ -12,11 +12,12 @@ Flow:
 """
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
-from api.models import AskRequest, AskResponse
+from api.models import AskRequest, AskResponse, AskSource
 from core.retrieval.retriever import retrieve_chunks
-from core.llm.client import call_llm
-from core.llm.prompts import ANSWER_QUESTION, format_chunks_for_prompt
+from core.llm.client import LLM_ERROR_PREFIX, call_llm_reply
+from core.llm.prompts import ANSWER_QUESTION, REFUSAL_SENTENCE, format_chunks_for_prompt
 
 router = APIRouter()
 
@@ -66,7 +67,16 @@ def ask_question(request: AskRequest):
     )
 
     # Call Groq
-    answer = call_llm(prompt, temperature=0.3)
+    answer, cut_off = call_llm_reply(prompt, temperature=0.3)
+
+    # An LLM failure is never a 200 answer. The error_code field lets
+    # on-call and the frontend tell it apart from a proxy 502.
+    if answer.startswith(LLM_ERROR_PREFIX):
+        print(f"[error] POST /api/v1/ask -> 502: {answer}", flush=True)
+        return JSONResponse(
+            status_code=502,
+            content={"detail": answer, "error_code": "LLM_UPSTREAM_ERROR"},
+        )
 
     return AskResponse(
         status="success",
@@ -74,4 +84,15 @@ def ask_question(request: AskRequest):
         question=request.question,
         answer=answer,
         chunks_used=len(chunks),
+        sources=[
+            AskSource(
+                file=c["file_path"],
+                name=c["name"],
+                lines=f"{c['start_line']}-{c['end_line']}",
+                score=c["score"],
+            )
+            for c in chunks
+        ],
+        refused=answer == REFUSAL_SENTENCE,
+        cut_off=cut_off,
     )

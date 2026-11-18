@@ -99,12 +99,22 @@ class AskRequest(BaseModel):
     )
 
 
+class AskSource(BaseModel):
+    file: str = Field(..., example="src/auth.py")
+    name: str = Field(..., example="authenticate")
+    lines: str = Field(..., description="Source line range 'start-end'.", example="14-38")
+    score: float = Field(..., description="Retrieval similarity score.")
+
+
 class AskResponse(BaseModel):
     status: str = Field(..., example="success")
     repo_name: str
     question: str
     answer: str = Field(..., description="LLM-generated answer with file citations.")
     chunks_used: int = Field(..., description="Number of code chunks used as context.")
+    sources: list[AskSource] = Field(default_factory=list, description="Retrieved chunks sent to the LLM.")
+    refused: bool = Field(False, description="True only when the answer is exactly the fixed refusal sentence.")
+    cut_off: bool = Field(False, description="True when the model stopped at the token limit (finish_reason=length).")
 
 
 # -----------------------------------------------------------------------
