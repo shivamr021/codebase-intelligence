@@ -44,22 +44,32 @@ MODEL = GROQ_MODEL
 MAX_TOKENS = GROQ_MAX_TOKENS
 
 
-def _reply_text(response) -> str:
+LLM_ERROR_PREFIX = "[LLM Error]"
+
+
+def _reply(response) -> tuple[str, bool]:
     """
-    The reply text, or an [LLM Error] when the model sent nothing.
+    (reply text, cut_off), or an [LLM Error] when the model sent nothing.
     Reasoning models can spend every token on hidden reasoning and send
     "" or None (finish_reason=length); that is a failure, not an answer.
+    A reply with text and finish_reason=length is real but cut off.
     """
     choice = response.choices[0]
     text = (choice.message.content or "").strip()
     if not text:
-        return f"[LLM Error] Empty reply from the model (finish_reason={choice.finish_reason})"
-    return text
+        return f"{LLM_ERROR_PREFIX} Empty reply from the model (finish_reason={choice.finish_reason})", False
+    return text, choice.finish_reason == "length"
 
 
 def call_llm(prompt: str, temperature: float = 0.3) -> str:
+    """Send a prompt to Groq, return the response text (see call_llm_reply)."""
+    return call_llm_reply(prompt, temperature)[0]
+
+
+def call_llm_reply(prompt: str, temperature: float = 0.3) -> tuple[str, bool]:
     """
-    Send a prompt to Groq, return the response text.
+    Send a prompt to Groq, return (response text, cut_off).
+    cut_off is True when the model stopped at the token limit with text.
 
     Args:
         prompt      : The full prompt string (already has code context injected).
@@ -67,9 +77,9 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
                       0.3 is good for code analysis — consistent but not robotic.
 
     Returns:
-        The model's response as a plain string.
-        On any unrecoverable error, returns an error message string
-        (never raises) so the API route can still return a clean JSON response.
+        (text, cut_off). On any unrecoverable error, text is an error message
+        starting with "[LLM Error]" and cut_off is False (never raises), so
+        each route decides how to report it (/ask answers 502).
 
     Retry logic:
         Groq free tier has rate limits (30 RPM, 6000 TPM).
@@ -102,7 +112,7 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
         )
 
         # response.choices[0].message.content is where Groq puts the text.
-        return _reply_text(response)
+        return _reply(response)
 
     except RateLimitError:
         # 429 — hit the rate limit. Wait and retry once.
@@ -113,11 +123,11 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
     except APIError as e:
         # Non-rate-limit API error (wrong model name, server error, etc.)
         # Return immediately — retrying won't help.
-        return f"[LLM Error] Groq API error: {str(e)}"
+        return f"{LLM_ERROR_PREFIX} Groq API error: {str(e)}", False
 
     except Exception as e:
         # Catch-all — network failure, timeout, etc.
-        return f"[LLM Error] Unexpected error: {str(e)}"
+        return f"{LLM_ERROR_PREFIX} Unexpected error: {str(e)}", False
 
     # --- Attempt 2 (only reached after RateLimitError + sleep) ---
     try:
@@ -140,12 +150,12 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
             max_tokens=MAX_TOKENS,
             temperature=temperature,
         )
-        return _reply_text(response)
+        return _reply(response)
 
     except Exception as e:
         # Both attempts failed. Return a clean error string.
         return (
-            f"[LLM Error] Failed after retry. "
+            f"{LLM_ERROR_PREFIX} Failed after retry. "
             f"You may have hit Groq's free tier rate limit. "
             f"Wait 1 minute and try again. Details: {str(e)}"
-        )
+        ), False
