@@ -19,7 +19,7 @@ Why not hardcode the API key here?
 import time
 from openai import OpenAI, RateLimitError, APIError
 
-from config import GROQ_API_KEY
+from config import GROQ_API_KEY, GROQ_MAX_TOKENS, GROQ_MODEL
 
 # -----------------------------------------------------------------------
 # OpenAI client pointed at Groq's endpoint.
@@ -37,15 +37,24 @@ _client = OpenAI(
     base_url="https://api.groq.com/openai/v1",
 )
 
-# Model we use for all generation tasks.
-# llama-3.3-70b-versatile: 70B params, 128K context, strong at code reasoning.
-# Free tier on Groq. Verify this model ID at console.groq.com if it errors.
-MODEL = "llama-3.3-70b-versatile"
+# Model and token limit come from config.py (env GROQ_MODEL, GROQ_MAX_TOKENS).
+# llama-3.3-70b-versatile was shut down; gpt-oss-120b is a reasoning model
+# and needs 8192 tokens, or architecture replies come back empty.
+MODEL = GROQ_MODEL
+MAX_TOKENS = GROQ_MAX_TOKENS
 
-# Max tokens to generate per response.
-# 2048 is enough for architecture explanations and bug reports.
-# Raising this uses more of your free quota per call.
-MAX_TOKENS = 2048
+
+def _reply_text(response) -> str:
+    """
+    The reply text, or an [LLM Error] when the model sent nothing.
+    Reasoning models can spend every token on hidden reasoning and send
+    "" or None (finish_reason=length); that is a failure, not an answer.
+    """
+    choice = response.choices[0]
+    text = (choice.message.content or "").strip()
+    if not text:
+        return f"[LLM Error] Empty reply from the model (finish_reason={choice.finish_reason})"
+    return text
 
 
 def call_llm(prompt: str, temperature: float = 0.3) -> str:
@@ -93,8 +102,7 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
         )
 
         # response.choices[0].message.content is where Groq puts the text.
-        # Strip removes leading/trailing whitespace from the response.
-        return response.choices[0].message.content.strip()
+        return _reply_text(response)
 
     except RateLimitError:
         # 429 — hit the rate limit. Wait and retry once.
@@ -132,7 +140,7 @@ def call_llm(prompt: str, temperature: float = 0.3) -> str:
             max_tokens=MAX_TOKENS,
             temperature=temperature,
         )
-        return response.choices[0].message.content.strip()
+        return _reply_text(response)
 
     except Exception as e:
         # Both attempts failed. Return a clean error string.

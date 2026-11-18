@@ -125,6 +125,24 @@ MAX_CHUNK_CHARS = 3000
 # A 10-character "function" is probably just a stub. Skip it.
 MIN_CHUNK_CHARS = 50
 
+# Maximum lines per "module" chunk (top-level code between functions/classes).
+MODULE_CHUNK_LINES = 50
+
+# Version of the chunks this module produces, stored with each repo's metadata.
+# Bump it by hand whenever a change here alters the chunks, so collections
+# built by older code count as stale and get a full re-index.
+#   1: functions, classes and types only (before module chunks)
+#   2: plus module chunks for top-level code
+INDEX_VERSION = 2
+
+
+def read_index_version(metadata: dict | None) -> int:
+    """Stored index version; missing, old or hand-edited values read as 1."""
+    value = (metadata or {}).get("index_version")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return 1
+
 
 def _get_parser(language: str) -> Parser | None:
     """
@@ -283,6 +301,70 @@ def _chunk_by_ast(
     return chunks
 
 
+def _module_chunks(
+    source_code: str,
+    language: str,
+    file_rel_path: str,
+    ast_chunks: list[dict],
+) -> list[dict]:
+    """
+    Chunk the top-level code that no AST chunk covers (settings, constants,
+    imports between functions). Without this, a line like
+    `EMBEDDING_MODEL = "..."` in a file that also has functions is never
+    indexed, so Q&A cannot find it.
+
+    Works the same in every language: any line outside every AST chunk's
+    line range is a gap line. Each run of gap lines is trimmed of blank
+    lines and split evenly into pieces of at most MODULE_CHUNK_LINES lines.
+    Pieces under MIN_CHUNK_CHARS are skipped, like tiny AST chunks.
+    """
+    # split("\n"), not splitlines(): tree-sitter rows count only "\n"
+    lines = source_code.split("\n")
+    covered = set()
+    for chunk in ast_chunks:
+        covered.update(range(chunk["start_line"], chunk["end_line"] + 1))
+
+    gaps, start = [], None
+    for line_no in range(1, len(lines) + 2):
+        is_gap = line_no <= len(lines) and line_no not in covered
+        if is_gap and start is None:
+            start = line_no
+        elif not is_gap and start is not None:
+            gaps.append((start, line_no - 1))
+            start = None
+
+    chunks = []
+    for gap_start, gap_end in gaps:
+        while gap_start <= gap_end and not lines[gap_start - 1].strip():
+            gap_start += 1
+        while gap_end >= gap_start and not lines[gap_end - 1].strip():
+            gap_end -= 1
+        total = gap_end - gap_start + 1
+        if total <= 0:
+            continue
+
+        pieces = -(-total // MODULE_CHUNK_LINES)  # ceil
+        size = -(-total // pieces)
+        for piece_start in range(gap_start, gap_end + 1, size):
+            piece_end = min(piece_start + size - 1, gap_end)
+            chunk_text = "\n".join(lines[piece_start - 1 : piece_end])
+            if len(chunk_text.strip()) < MIN_CHUNK_CHARS:
+                continue
+            if len(chunk_text) > MAX_CHUNK_CHARS:
+                chunk_text = chunk_text[:MAX_CHUNK_CHARS] + "\n... [truncated]"
+            chunks.append({
+                "text":       chunk_text,
+                "file_path":  file_rel_path,
+                "chunk_type": "module",
+                "name":       f"module_{piece_start}_{piece_end}",
+                "start_line": piece_start,
+                "end_line":   piece_end,
+                "language":   language,
+            })
+
+    return chunks
+
+
 def _fallback_line_chunks(
     source_code: str,
     language: str,
@@ -343,7 +425,8 @@ def chunk_file(file_info: dict) -> list[dict]:
     Returns a list of chunk dicts (may be empty if file is unreadable).
 
     Flow:
-      1. Read file → 2. Try AST chunking → 3. Fallback to line chunking
+      1. Read file → 2. Try AST chunking, plus module chunks for the
+         top-level code between them → 3. Fallback to line chunking
          if AST produces nothing → 4. Return chunks
     """
 
@@ -376,6 +459,8 @@ def chunk_file(file_info: dict) -> list[dict]:
             f"(language={language}) — using line fallback"
         )
         chunks = _fallback_line_chunks(source_code, language, file_path)
+    else:
+        chunks += _module_chunks(source_code, language, file_path, chunks)
 
     return chunks
 

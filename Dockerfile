@@ -4,6 +4,9 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+# Hugging Face Spaces run the container as user 1000, so the app runs as that user
+RUN useradd -m -u 1000 user
+
 WORKDIR /app
 
 # System dependencies required by some Python packages
@@ -20,11 +23,14 @@ RUN pip install --upgrade pip
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy application code, owned by user 1000 so it can write /app/tmp
+COPY --chown=user . .
+RUN chown user /app
 
-# Hugging Face Spaces port
+USER user
+
+# Hugging Face Spaces port; Render and others set $PORT
 EXPOSE 7860
 
-# Start FastAPI
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Start FastAPI (shell form so ${PORT} expands; exec keeps signals working)
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-7860}

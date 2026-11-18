@@ -40,30 +40,34 @@ def _parse_bug_json(llm_response: str) -> list[dict]:
     adds preamble like "Here are the bugs:" before the array.
     We find the first '[' and last ']' to extract just the JSON.
 
-    Returns empty list if parsing fails — never raises.
+    A valid empty array [] means "no bugs found" and is returned as [].
+    Raises ValueError with the reason when the reply is unusable, so the
+    route answers 502 instead of a false "no issues detected".
     """
+    if llm_response.startswith("[LLM Error]"):
+        raise ValueError(f"Bug scan failed: {llm_response}")
+
+    # Find the JSON array boundaries
+    start = llm_response.find("[")
+    end   = llm_response.rfind("]") + 1   # rfind = last occurrence
+
+    if start == -1 or end == 0:
+        print("[bugs.py] LLM did not return a JSON array.")
+        raise ValueError("Bug scan failed: the model did not return a JSON array.")
+
+    json_str = llm_response[start:end]
     try:
-        # Find the JSON array boundaries
-        start = llm_response.find("[")
-        end   = llm_response.rfind("]") + 1   # rfind = last occurrence
-
-        if start == -1 or end == 0:
-            print("[bugs.py] LLM did not return a JSON array.")
-            return []
-
-        json_str = llm_response[start:end]
         bugs = json.loads(json_str)
-
-        # Validate it's actually a list
-        if not isinstance(bugs, list):
-            return []
-
-        return bugs
-
     except json.JSONDecodeError as e:
         print(f"[bugs.py] JSON parse error: {e}")
         print(f"[bugs.py] Raw response: {llm_response[:500]}")
-        return []
+        raise ValueError(f"Bug scan failed: the model's JSON array could not be parsed ({e}).") from e
+
+    # Validate it's actually a list
+    if not isinstance(bugs, list):
+        raise ValueError("Bug scan failed: the model did not return a JSON array.")
+
+    return bugs
 
 
 @router.get(
@@ -72,7 +76,7 @@ def _parse_bug_json(llm_response: str) -> list[dict]:
     summary="Detect bugs and code issues",
     description="Analyse the codebase for bugs, code smells, and issues using LLM review.",
 )
-async def detect_bugs(repo_name: str):
+def detect_bugs(repo_name: str):
     """
     Broad-coverage bug detection across the indexed codebase.
     Returns up to 10 issues sorted by severity.
@@ -94,8 +98,11 @@ async def detect_bugs(repo_name: str):
     # Use lower temperature for bug detection — want consistent, deterministic output
     llm_response = call_llm(prompt, temperature=0.1)
 
-    # Parse structured JSON from response
-    raw_bugs = _parse_bug_json(llm_response)
+    # Parse structured JSON from response; an unusable reply is a 502
+    try:
+        raw_bugs = _parse_bug_json(llm_response)
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
     # Convert to BugItem models — skip any malformed entries
     bug_items = []

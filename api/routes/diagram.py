@@ -41,7 +41,7 @@ router = APIRouter()
     summary="Generate architecture diagram",
     description="Generate a Mermaid architecture diagram and summary for the indexed repo.",
 )
-async def get_diagram(repo_name: str):
+def get_diagram(repo_name: str):
     """
     Returns architecture summary + Mermaid syntax.
     Frontend renders Mermaid string using mermaid.js — no image generation needed.
@@ -49,7 +49,8 @@ async def get_diagram(repo_name: str):
 
     cached = get_repo_metadata(repo_name)
 
-    if cached:
+    # A failed architecture (AD13) stores the graph with an empty mermaid
+    if cached and cached.get("mermaid"):
         print(
             f"[diagram.py] Using cached architecture "
             f"for '{repo_name}'"

@@ -166,6 +166,15 @@ def extract_owner_repo(github_url: str):
     return parts[-2], parts[-1]
 
 
+def repo_identity(owner: str, repo: str) -> str:
+    """
+    The one collection name for a GitHub repo (AD8): "owner--repo", lower
+    case, dots kept. GitHub owners never hold "--", so the first "--" splits
+    it; Qdrant allows "-" and "." in collection names.
+    """
+    return f"{owner.lower()}--{repo.lower()}"
+
+
 def validate_github_url(url: str) -> bool:
     pattern = r"^https?://github\.com/[\w\-\.]+/[\w\-\.]+/?$"
     clean_url = url.rstrip("/")
@@ -238,7 +247,7 @@ def resolve_repo(
         "message": f"Resolved '{owner}/{repo}'",
         "owner": owner,
         "repo": repo,
-        "repo_name": repo,
+        "repo_name": repo_identity(owner, repo),
         "commit_sha": resolved_sha,
         "branch": branch,
     }
@@ -250,6 +259,7 @@ def clone_repo(
     repo: str,
     branch: str | None = None,
     commit_hash: str | None = None,
+    resolved_sha: str | None = None,
 ) -> dict:
     """
     Phase 2: Download the repo as a zip via GitHub API.
@@ -260,19 +270,21 @@ def clone_repo(
     Archive URL logic:
       - commit_hash provided: /archive/{sha}.zip  (exact snapshot)
       - branch provided:      /archive/refs/heads/{branch}.zip
-      - neither:              /archive/refs/heads/main.zip (fallback to master)
+      - neither:              /archive/{resolved_sha}.zip (when known), then
+                              /archive/HEAD.zip (the default branch, whatever
+                              its name), then refs/heads/main, then master (AD7)
 
     No git binary required — works on any container.
     """
 
     repo_name = repo
-    local_path = os.path.join(TMP_DIR, repo_name)
 
-    # Clean previous download
-    if os.path.exists(local_path):
-        shutil.rmtree(local_path, onerror=_force_remove_readonly)
-
+    # Each run gets its own folder (AD11): two ingests of the same repo name
+    # (other branch, other owner) never share or wipe each other's files.
+    # The caller deletes work_dir when it is done; on error we delete it here.
     os.makedirs(TMP_DIR, exist_ok=True)
+    work_dir = tempfile.mkdtemp(prefix=f"{repo_name}-", dir=TMP_DIR)
+    cloned = False
 
     # Build the correct archive URL based on what was requested
     base = f"https://github.com/{owner}/{repo}/archive"
@@ -286,8 +298,12 @@ def clone_repo(
         zip_urls = [f"{base}/refs/heads/{branch}.zip"]
         print(f"[cloner.py] Downloading branch '{branch}'...")
     else:
-        # Default: try main, fallback to master
-        zip_urls = [
+        # Default branch (AD7): the resolved SHA is exact; HEAD.zip follows the
+        # repo's real default branch (develop, trunk, ...) when the SHA is
+        # unknown (rate limit) or its archive fails; main and master last.
+        zip_urls = [f"{base}/{resolved_sha}.zip"] if resolved_sha else []
+        zip_urls += [
+            f"{base}/HEAD.zip",
             f"{base}/refs/heads/main.zip",
             f"{base}/refs/heads/master.zip",
         ]
@@ -321,22 +337,15 @@ def clone_repo(
 
         print(f"[cloner.py] Downloaded {len(response.content) / 1024:.1f} KB, extracting...")
 
-        # Extract zip
+        # Extract zip into this run's own folder
         with zipfile.ZipFile(zip_path, "r") as zf:
             # GitHub zips have a top-level folder like "repo-main/" or "repo-master/"
             names = zf.namelist()
             top_level = names[0].split("/")[0]  # e.g. "flask-boilerplate-main"
+            zf.extractall(work_dir)
 
-            extract_tmp = os.path.join(TMP_DIR, f"_extract_{repo_name}")
-            if os.path.exists(extract_tmp):
-                shutil.rmtree(extract_tmp, onerror=_force_remove_readonly)
-
-            zf.extractall(extract_tmp)
-
-        # Move the inner folder to the expected local_path
-        inner_path = os.path.join(extract_tmp, top_level)
-        shutil.move(inner_path, local_path)
-        shutil.rmtree(extract_tmp, onerror=_force_remove_readonly)
+        local_path = os.path.join(work_dir, top_level)
+        cloned = True
 
         print(f"[cloner.py] ✅ Successfully extracted '{repo_name}' to {local_path}")
         return {
@@ -344,6 +353,7 @@ def clone_repo(
             "message": f"Successfully downloaded '{repo_name}'",
             "repo_name": repo_name,
             "local_path": local_path,
+            "work_dir": work_dir,
         }
 
     except requests.Timeout:
@@ -368,3 +378,5 @@ def clone_repo(
                 os.unlink(zip_path)
             except Exception:
                 pass
+        if not cloned:
+            shutil.rmtree(work_dir, onerror=_force_remove_readonly)

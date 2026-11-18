@@ -29,11 +29,8 @@ What is top-k retrieval?
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
 
-from config import QDRANT_URL, QDRANT_API_KEY
-
-# Reuse the same client configuration as embedder.py
-# Same model name is critical — see module docstring above
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+# Same model as embedder.py (both read config) — see module docstring above
+from config import EMBEDDING_MODEL, QDRANT_URL, QDRANT_API_KEY
 
 _qdrant = QdrantClient(
     url=QDRANT_URL,
@@ -45,6 +42,12 @@ _qdrant = QdrantClient(
 # 5 chunks × ~750 tokens each = ~3750 tokens of context.
 # Well within Groq's 6000 TPM limit per request.
 DEFAULT_TOP_K = 5
+
+
+def _use_configured_model() -> None:
+    """Load the configured embedding model on first query, never at import (G4)."""
+    if _qdrant.embedding_model_name != EMBEDDING_MODEL:
+        _qdrant.set_model(EMBEDDING_MODEL)
 
 
 def retrieve_chunks(
@@ -108,6 +111,7 @@ def retrieve_chunks(
 
     # Perform semantic search
     try:
+        _use_configured_model()
         results = _qdrant.query(
             collection_name=coll,
             query_text=query,

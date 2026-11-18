@@ -1,13 +1,15 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams
-from qdrant_client.models import PointStruct
+from qdrant_client.models import FieldCondition, Filter, MatchValue, PointStruct
 import hashlib
 
 from config import (
+    EMBEDDING_MODEL,
     QDRANT_URL,
     QDRANT_API_KEY,
     QDRANT_METADATA_COLLECTION,
 )
+from core.ingestion.chunker import INDEX_VERSION, read_index_version
 
 # Separate client so this module is self-contained
 _client = QdrantClient(
@@ -62,6 +64,7 @@ def save_repo_metadata(
     architecture_context=None,
     commit_sha=None,
     file_hashes=None,
+    extra=None,
 ):
     """
     Store architecture + graph artifacts for a repository.
@@ -69,6 +72,7 @@ def save_repo_metadata(
 
     commit_sha:  The HEAD commit SHA at index time (for incremental indexing).
     file_hashes: Dict of {rel_path: sha256_hex} for every indexed file.
+    extra:       More payload fields, e.g. {"index_version": 2}.
     """
 
     ensure_metadata_collection()
@@ -90,6 +94,7 @@ def save_repo_metadata(
             "architecture_context": architecture_context,
             "commit_sha": commit_sha,
             "file_hashes": file_hashes or {},
+            **(extra or {}),
         },
     )
 
@@ -108,18 +113,23 @@ def save_repo_metadata(
 def get_repo_metadata(repo_name: str):
     """
     Retrieve persisted metadata for a repository.
+    Returns None when nothing is stored yet, including on a fresh Qdrant
+    where the metadata collection does not exist.
     """
+
+    if not _client.collection_exists(QDRANT_METADATA_COLLECTION):
+        return None
 
     results, _ = _client.scroll(
         collection_name=QDRANT_METADATA_COLLECTION,
-        scroll_filter={
-            "must": [
-                {
-                    "key": "repo_name",
-                    "match": {"value": repo_name},
-                }
+        scroll_filter=Filter(
+            must=[
+                FieldCondition(
+                    key="repo_name",
+                    match=MatchValue(value=repo_name),
+                )
             ]
-        },
+        ),
         limit=1,
     )
 
@@ -127,3 +137,24 @@ def get_repo_metadata(repo_name: str):
         return None
 
     return results[0].payload
+
+
+def is_index_compatible(collection_name: str, metadata: dict | None) -> bool:
+    """
+    True when the stored index can be reused by the current code (AD4, AD12):
+    the collection's vector name matches the configured embedding model
+    (qdrant-client names it "fast-<model>", e.g. fast-bge-small-en-v1.5),
+    and the stored index_version is not older than INDEX_VERSION.
+    Missing metadata, a missing collection or any lookup error count as
+    not compatible, so the caller re-indexes instead of trusting stale data.
+    """
+    if read_index_version(metadata) < INDEX_VERSION:
+        return False
+
+    expected = f"fast-{EMBEDDING_MODEL.split('/')[-1].lower()}"
+    try:
+        vectors = _client.get_collection(collection_name).config.params.vectors
+    except Exception:
+        return False
+
+    return isinstance(vectors, dict) and expected in vectors

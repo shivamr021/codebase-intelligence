@@ -61,14 +61,13 @@ QDRANT_API_KEY: str = os.getenv("QDRANT_API_KEY", "")
 QDRANT_METADATA_COLLECTION = "repo_metadata"
 
 # -----------------------------------------------------------------------
-# TMP_DIR
+# TMP_DIR (optional)
 # Where cloned repos are stored temporarily during processing.
-# Uses os.path.join so it works on both Windows (backslash) and Linux (slash).
-# os.path.dirname(__file__) = the folder this config.py file lives in
-# So TMP_DIR always points to /your-project/tmp/ regardless of where
-# you run the server from.
+# Set it to a writable folder when the app folder is read-only; the
+# cloner creates it on first ingest if it does not exist yet.
+# Default: /your-project/tmp/ regardless of where you run the server from.
 # -----------------------------------------------------------------------
-TMP_DIR: str = os.path.join(os.path.dirname(__file__), "tmp")
+TMP_DIR: str = os.getenv("TMP_DIR", "").strip() or os.path.join(os.path.dirname(__file__), "tmp")
 
 # -----------------------------------------------------------------------
 # MAX_FILES
@@ -77,6 +76,42 @@ TMP_DIR: str = os.path.join(os.path.dirname(__file__), "tmp")
 # You can raise this later once you've confirmed Railway memory stays stable.
 # -----------------------------------------------------------------------
 MAX_FILES: int = int(os.getenv("MAX_FILES", "500"))
+
+# -----------------------------------------------------------------------
+# Model settings (optional, typed by a person into a dashboard)
+# An empty value falls back to the default. A value that is not a whole
+# number is remembered here and reported by validate_config() at startup,
+# so the server fails with the variable's name instead of a bare int() error.
+# -----------------------------------------------------------------------
+_INVALID_SETTINGS: dict[str, str] = {}
+
+
+def _str_env(name: str, default: str) -> str:
+    return os.getenv(name, "").strip() or default
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        _INVALID_SETTINGS[name] = raw
+        return default
+    return value
+
+
+# Groq chat model; llama-3.3-70b-versatile was shut down.
+GROQ_MODEL: str = _str_env("GROQ_MODEL", "openai/gpt-oss-120b")
+
+# gpt-oss-120b is a reasoning model: 2048 tokens left architecture replies empty.
+GROQ_MAX_TOKENS: int = _int_env("GROQ_MAX_TOKENS", 8192)
+
+# FastEmbed model shared by the embedder and the retriever.
+EMBEDDING_MODEL: str = _str_env("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
 
 # -----------------------------------------------------------------------
@@ -105,3 +140,7 @@ def validate_config() -> None:
             f"Missing required environment variables: {', '.join(missing)}\n"
             f"Add them to your .env file (local) or Railway Variables tab (production)."
         )
+
+    if _INVALID_SETTINGS:
+        bad = ", ".join(f"{key}={value!r}" for key, value in _INVALID_SETTINGS.items())
+        raise ValueError(f"Invalid environment variables (must be a positive whole number): {bad}")

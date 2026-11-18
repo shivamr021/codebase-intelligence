@@ -30,7 +30,7 @@ router = APIRouter()
     summary="Get dependency graph",
     description="Returns interactive Pyvis HTML graph + statistics for the indexed repo.",
 )
-async def get_graph(repo_name: str):
+def get_graph(repo_name: str):
     """
     Returns the dependency graph built during ingestion.
     The HTML is a self-contained Pyvis network — embed it in an iframe.

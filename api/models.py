@@ -47,6 +47,10 @@ class IngestRequest(BaseModel):
         example="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
         pattern=r"^[0-9a-f]{40}$",
     )
+    force: bool = Field(
+        False,
+        description="Re-index from scratch even if the stored index is up to date.",
+    )
 
     @model_validator(mode="after")
     def branch_and_commit_mutually_exclusive(self) -> "IngestRequest":

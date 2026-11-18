@@ -4,6 +4,9 @@ from core.llm.prompts import (
     format_chunks_for_prompt,
 )
 
+# Summary returned when the architecture step fails; callers must not save it.
+ARCHITECTURE_FAILED = "Architecture generation failed."
+
 
 def parse_architecture_response(llm_response: str,) -> tuple[str, str]:
 
@@ -65,19 +68,17 @@ def generate_architecture(
         temperature=0.4,
     )
 
+    # Any LLM error (including an empty reply) or a reply with no mermaid
+    # block is a failure: return the sentinel so nothing gets saved and the
+    # next ingest retries, instead of storing a fake "Generation Failed" chart.
     if llm_response.startswith("[LLM Error]"):
-        return (
-            "Architecture generation failed.",
-            "flowchart TD\nA[Generation Failed] --> B[Prompt Too Large]"
-        )
+        print(f"[architecture.py] {llm_response[:300]}")
+        return ARCHITECTURE_FAILED, ""
 
     summary, mermaid = (parse_architecture_response(llm_response))
 
     if not mermaid:
-        mermaid = (
-            "flowchart TD\n"
-            "A[Generation Failed] --> "
-            "B[Try Re-ingesting]"
-        )
+        print("[architecture.py] LLM reply has no mermaid block.")
+        return ARCHITECTURE_FAILED, ""
 
     return summary, mermaid

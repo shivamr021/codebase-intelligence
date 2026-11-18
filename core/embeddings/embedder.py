@@ -19,16 +19,12 @@ Note on _qdrant.add() vs _qdrant.upsert():
 """
 
 import hashlib
-import os
-import shutil
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
 from qdrant_client.http.models import PayloadSchemaType
 
-from config import QDRANT_URL, QDRANT_API_KEY
-
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+from config import EMBEDDING_MODEL, QDRANT_URL, QDRANT_API_KEY
 
 _qdrant = QdrantClient(
     url=QDRANT_URL,
@@ -37,40 +33,15 @@ _qdrant = QdrantClient(
 )
 
 
-def _cleanup_fastembed_cache():
+def _use_configured_model() -> None:
     """
-    Workaround for fastembed 0.2.6 bug on Windows.
+    Load the configured embedding model on first use, never at import (G4).
 
-    FastEmbed downloads the model to a temp dir (`tmp/fast-bge-small-en`)
-    then does os.rename() to the final path (`fast-bge-small-en`).
-    On Windows, os.rename() raises [WinError 183] if the TARGET already
-    exists (from a previous run). We must remove BOTH:
-      - The stale destination dir (so rename succeeds)
-      - The stale tmp dir (so download doesn't conflict)
+    Until set_model runs, qdrant-client falls back to its default model and
+    the old vector name, so this runs before every add.
     """
-    import tempfile
-    cache_dir = os.environ.get(
-        "FASTEMBED_CACHE_PATH",
-        os.path.join(tempfile.gettempdir(), "fastembed_cache"),
-    )
-
-    # Delete stale destination model dir (the rename TARGET)
-    model_dir = os.path.join(cache_dir, "fast-bge-small-en")
-    if os.path.exists(model_dir):
-        try:
-            shutil.rmtree(model_dir)
-            print(f"[embedder.py] Cleaned stale fastembed model dir: {model_dir}")
-        except Exception:
-            pass
-
-    # Delete stale tmp dir (the rename SOURCE)
-    tmp_dir = os.path.join(cache_dir, "tmp")
-    if os.path.exists(tmp_dir):
-        try:
-            shutil.rmtree(tmp_dir)
-            print(f"[embedder.py] Cleaned stale fastembed temp dir: {tmp_dir}")
-        except Exception:
-            pass
+    if _qdrant.embedding_model_name != EMBEDDING_MODEL:
+        _qdrant.set_model(EMBEDDING_MODEL)
 
 
 def _chunk_id(
@@ -218,7 +189,7 @@ def embed_and_store(
     try:
         print(f"[embedder.py] Embedding {len(chunks)} chunks (first run downloads ~130MB model)...")
 
-        _cleanup_fastembed_cache()
+        _use_configured_model()
         _qdrant.add(
             collection_name=coll,
             documents=texts,
@@ -278,7 +249,7 @@ def upsert_chunks(
     try:
         print(f"[embedder.py] Upserting {len(chunks)} chunks into '{coll}'...")
 
-        _cleanup_fastembed_cache()
+        _use_configured_model()
         _qdrant.add(
             collection_name=coll,
             documents=texts,
