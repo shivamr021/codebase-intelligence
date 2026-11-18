@@ -16,6 +16,7 @@ import zipfile
 import tempfile
 
 import requests
+from urllib3.exceptions import ReadTimeoutError
 
 from config import TMP_DIR, GITHUB_TOKEN
 
@@ -253,6 +254,20 @@ def resolve_repo(
     }
 
 
+# Bytes per streamed piece [guess]: the requests default (1 byte) costs one
+# Python write per byte. Measure: time a large archive at 8, 64, 256 KiB.
+DOWNLOAD_CHUNK_BYTES = 64 * 1024
+
+TIMEOUT_MESSAGE = "Download timed out after 60s. Repository may be too large."
+
+
+def _is_read_timeout(exc: Exception) -> bool:
+    """iter_content re-raises a urllib3 read timeout as requests ConnectionError."""
+    return isinstance(exc, requests.exceptions.ConnectionError) and any(
+        isinstance(arg, ReadTimeoutError) for arg in exc.args
+    )
+
+
 def clone_repo(
     github_url: str,
     owner: str,
@@ -312,12 +327,14 @@ def clone_repo(
     zip_path = None
     try:
         # Try each URL in order (single URL for branch/commit, main+master for default)
+        # stream=True: the body is read piece by piece below, never held whole
         response = None
         for url in zip_urls:
-            response = requests.get(url, timeout=60, allow_redirects=True)
+            response = requests.get(url, timeout=60, allow_redirects=True, stream=True)
             if response.status_code == 200:
                 break
             print(f"[cloner.py] URL returned {response.status_code}: {url}")
+            response.close()
 
         if response.status_code != 200:
             return {
@@ -330,12 +347,18 @@ def clone_repo(
                 "local_path": None,
             }
 
-        # Save zip to temp file
-        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
-            f.write(response.content)
+        # Stream the zip into TMP_DIR; record its path before the first write
+        # so a dropped connection still deletes the half file in `finally`.
+        size = 0
+        with response, tempfile.NamedTemporaryFile(
+            suffix=".zip", dir=TMP_DIR, delete=False
+        ) as f:
             zip_path = f.name
+            for piece in response.iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
+                f.write(piece)
+                size += len(piece)
 
-        print(f"[cloner.py] Downloaded {len(response.content) / 1024:.1f} KB, extracting...")
+        print(f"[cloner.py] Downloaded {size / 1024:.1f} KB, extracting...")
 
         # Extract zip into this run's own folder
         with zipfile.ZipFile(zip_path, "r") as zf:
@@ -359,12 +382,19 @@ def clone_repo(
     except requests.Timeout:
         return {
             "status": "error",
-            "message": "Download timed out after 60s. Repository may be too large.",
+            "message": TIMEOUT_MESSAGE,
             "repo_name": None,
             "local_path": None,
         }
 
     except Exception as e:
+        if _is_read_timeout(e):
+            return {
+                "status": "error",
+                "message": TIMEOUT_MESSAGE,
+                "repo_name": None,
+                "local_path": None,
+            }
         return {
             "status": "error",
             "message": f"Unexpected error while downloading: {str(e)}",

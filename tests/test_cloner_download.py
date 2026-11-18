@@ -5,6 +5,7 @@ import pytest
 import requests
 from fastapi.testclient import TestClient
 from qdrant_client.models import Distance, VectorParams
+from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 SHA = "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
 APP = {f"{n}.py": f"def {n}(items):\n    total = sum(len(str(i)) for i in items)\n    return total\n" for n in ("app", "util")}
@@ -19,13 +20,13 @@ def zip_of(top, files):  # GitHub archive layout: every file under one top folde
 class FakeGitHub:  # api.github.com plus github.com archives at requests.get; records every URL asked, in order
     def __init__(self, served, sha=SHA, api_status=200):
         self.served, self.sha, self.api_status, self.urls = served, sha, api_status, []
-    def get(self, url, params=None, headers=None, timeout=None, allow_redirects=True):
+    def get(self, url, params=None, headers=None, timeout=None, allow_redirects=True, stream=False):
         self.urls.append(url)
         if url.startswith("https://api.github.com/"):
             body = ([{"sha": self.sha}] if self.sha else []) if self.api_status == 200 else {"message": "API rate limit exceeded"}
             return SimpleNamespace(status_code=self.api_status, json=lambda: body, content=b"")
         hit = self.served.get(url)
-        return SimpleNamespace(status_code=200 if hit else 404, content=hit or b"Not Found")
+        return Streamed(200 if hit else 404, [hit or b"Not Found"])
     @property
     def archives(self):
         return [u.rsplit("/archive/", 1)[1] for u in self.urls if "/archive/" in u]
@@ -92,7 +93,7 @@ def test_master_only_repo_without_sha_still_downloads(harness, monkeypatch, tmp_
 @pytest.mark.parametrize("code", [404, 403])
 def test_every_archive_missing_reports_could_not_download_with_status(harness, monkeypatch, tmp_path, code):
     # Break: error text lost or status not reported (cloner.py:310-311) -> UI cannot show why (AC8); guard, green today.
-    use_fake(harness, monkeypatch, tmp_path, SimpleNamespace(get=lambda url, **kw: SimpleNamespace(status_code=code, content=b"")))
+    use_fake(harness, monkeypatch, tmp_path, SimpleNamespace(get=lambda url, **kw: Streamed(code, [b""])))
     from core.ingestion.cloner import clone_repo
     msg = clone_repo("https://github.com/o/gone", "o", "gone")["message"]
     assert (msg.startswith("Could not download repo 'https://github.com/o/gone'"), msg.endswith(f"HTTP {code}.")) == (True, True), msg

@@ -5,6 +5,7 @@ import httpx, openai, pytest, requests  # noqa: E401
 from fastapi.testclient import TestClient
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
+from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 SHA1, SHA2 = "a1" * 20, "b2" * 20
 FILES = {"app.py": "from util import helper\n\ndef main():\n    return helper()\n", "util.py": "def helper():\n    return 1\n"}
@@ -38,7 +39,9 @@ def github(monkeypatch, sha, files=FILES):  # GitHub: commit lookup answers `sha
     urls = []
     def get(url, **kwargs):
         urls.append(url)
-        return SimpleNamespace(status_code=200, json=lambda: [{"sha": sha}], content=buf.getvalue())
+        if "/archive/" in url:
+            return Streamed(200, [buf.getvalue()])
+        return SimpleNamespace(status_code=200, json=lambda: [{"sha": sha}], content=b"")
     monkeypatch.setattr(requests, "get", get)
     return urls
 

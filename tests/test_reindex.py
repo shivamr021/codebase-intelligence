@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from qdrant_client import models as qm
+from test_download_stream import Streamed  # archive answers in the stream=True form (P9)
 
 OLD, NEW, OLD_VEC = "a" * 40, "b" * 40, "fast-bge-small-en"
 BODY = "def {}():\n    # a function long enough to pass MIN_CHUNK_CHARS (chunker.py:126)\n    return {}\n"
@@ -28,7 +29,7 @@ class FakeGitHub:  # api.github.com + github.com archives behind requests.get: r
     def get(self, url, **kwargs):
         self.urls.append(url)
         if "/archive/" in url:
-            return SimpleNamespace(status_code=self.archive, content=self.zip if self.archive == 200 else b"Not Found")
+            return Streamed(self.archive, [self.zip if self.archive == 200 else b"Not Found"])
         body = [{"sha": self.sha}] if url.endswith("/commits") else {"sha": self.sha, "default_branch": "main"}
         return SimpleNamespace(status_code=200, json=lambda: body)
     archives = property(lambda self: [u for u in self.urls if "/archive/" in u])
