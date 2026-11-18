@@ -65,7 +65,8 @@ class WordEmbedding(FakeTextEmbedding):  # X1: vector = count of each X1_VOCAB w
 
 @pytest.fixture
 def x1_model(harness, monkeypatch):  # opt-in X1; the default fake stays for every other test
-    monkeypatch.setattr(qdrant_fastembed, "TextEmbedding", WordEmbedding)
+    harness.model = WordEmbedding  # every later harness.reload binds it again
+    bind_fake_model(monkeypatch, WordEmbedding)
     monkeypatch.setattr(qdrant_fastembed.QdrantFastembedMixin, "embedding_models", {})
     return WordEmbedding
 
@@ -95,12 +96,12 @@ def model_cache(tmp_path_factory):  # X3: the baked cache as the Dockerfile leav
         (snapshot(cache, model).parents[1] / "refs" / "main").write_text("0" * 40)
     return cache
 
-def bind_fake_model(monkeypatch):  # every lookup of the model class: 1.9.1's mixin, fastembed, our vector_space
-    monkeypatch.setattr(qdrant_fastembed, "TextEmbedding", FakeTextEmbedding, raising=False)
-    monkeypatch.setattr(fastembed, "TextEmbedding", FakeTextEmbedding)
+def bind_fake_model(monkeypatch, model=FakeTextEmbedding):  # every lookup of the model class: 1.9.1's mixin, fastembed, our vector_space
+    monkeypatch.setattr(qdrant_fastembed, "TextEmbedding", model, raising=False)
+    monkeypatch.setattr(fastembed, "TextEmbedding", model)
     if importlib.util.find_spec("core.embeddings.vectors"):  # P7 creates it; reload resets its lazy model per test
         vectors = importlib.reload(importlib.import_module("core.embeddings.vectors"))
-        monkeypatch.setattr(vectors, "TextEmbedding", FakeTextEmbedding, raising=False)
+        monkeypatch.setattr(vectors, "TextEmbedding", model, raising=False)
 
 @pytest.fixture(autouse=True)
 def harness(shell_env, monkeypatch, model_cache):
@@ -113,7 +114,7 @@ def harness(shell_env, monkeypatch, model_cache):
     for record in ("loads", "inits", "downloads"):
         monkeypatch.setattr(FakeTextEmbedding, record, [])
     h = SimpleNamespace(store=QdrantClient(":memory:"), groq=FakeGroq(), loads=FakeTextEmbedding.loads, chunks=CHUNKS,
-                        inits=FakeTextEmbedding.inits, downloads=FakeTextEmbedding.downloads)
+                        inits=FakeTextEmbedding.inits, downloads=FakeTextEmbedding.downloads, model=FakeTextEmbedding)
     reloaded = []
 
     def patch(name, store=None):  # point a module's Qdrant client at `store` (default: the shared one); Groq at fake
@@ -127,7 +128,7 @@ def harness(shell_env, monkeypatch, model_cache):
         for key, value in (env or {}).items():
             monkeypatch.setenv(key, value)
         importlib.reload(importlib.import_module("config"))
-        bind_fake_model(monkeypatch)
+        bind_fake_model(monkeypatch, h.model)
         for name in names:
             importlib.reload(importlib.import_module(name))
             reloaded.append(name)
