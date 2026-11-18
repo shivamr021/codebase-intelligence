@@ -250,6 +250,7 @@ def clone_repo(
     repo: str,
     branch: str | None = None,
     commit_hash: str | None = None,
+    resolved_sha: str | None = None,
 ) -> dict:
     """
     Phase 2: Download the repo as a zip via GitHub API.
@@ -260,7 +261,9 @@ def clone_repo(
     Archive URL logic:
       - commit_hash provided: /archive/{sha}.zip  (exact snapshot)
       - branch provided:      /archive/refs/heads/{branch}.zip
-      - neither:              /archive/refs/heads/main.zip (fallback to master)
+      - neither:              /archive/{resolved_sha}.zip (when known), then
+                              /archive/HEAD.zip (the default branch, whatever
+                              its name), then refs/heads/main, then master (AD7)
 
     No git binary required — works on any container.
     """
@@ -286,8 +289,12 @@ def clone_repo(
         zip_urls = [f"{base}/refs/heads/{branch}.zip"]
         print(f"[cloner.py] Downloading branch '{branch}'...")
     else:
-        # Default: try main, fallback to master
-        zip_urls = [
+        # Default branch (AD7): the resolved SHA is exact; HEAD.zip follows the
+        # repo's real default branch (develop, trunk, ...) when the SHA is
+        # unknown (rate limit) or its archive fails; main and master last.
+        zip_urls = [f"{base}/{resolved_sha}.zip"] if resolved_sha else []
+        zip_urls += [
+            f"{base}/HEAD.zip",
             f"{base}/refs/heads/main.zip",
             f"{base}/refs/heads/master.zip",
         ]

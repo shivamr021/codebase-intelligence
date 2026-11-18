@@ -383,6 +383,7 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
         request.github_url, owner, repo,
         branch=request.branch,
         commit_hash=request.commit_hash,
+        resolved_sha=commit_sha,
     )
 
     if clone_result["status"] == "error":
