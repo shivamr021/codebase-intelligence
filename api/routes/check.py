@@ -30,8 +30,9 @@ from core.storage.repo_metadata import get_repo_metadata, is_index_compatible
 router = APIRouter()
 
 
-def _not_indexed() -> dict:
+def _not_indexed(repo_name: str) -> dict:
     return {
+        "repo_name": repo_name,
         "indexed": False,
         "chunks": 0,
         "commit_sha": None,
@@ -71,10 +72,10 @@ def check_repo(repo_name: str | None = None, github_url: str | None = None):
         count = info.points_count or 0
         indexed = count > 0
     except (UnexpectedResponse, Exception):
-        return _not_indexed()
+        return _not_indexed(repo_name)
 
     if not indexed:
-        return _not_indexed()
+        return _not_indexed(repo_name)
 
     # Fetch stored metadata. A failing read must never turn /check into a
     # 500 (I1): treat it as "no metadata" — no files, no graph.
@@ -101,6 +102,7 @@ def check_repo(repo_name: str | None = None, github_url: str | None = None):
             pass  # Can't determine — don't flag as needing update
 
     return {
+        "repo_name": repo_name,
         "indexed": True,
         "chunks": count,
         "commit_sha": stored_sha,

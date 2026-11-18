@@ -1,3 +1,5 @@
+import re
+
 from core.llm.client import call_llm
 from core.llm.prompts import (
     EXPLAIN_ARCHITECTURE,
@@ -6,6 +8,29 @@ from core.llm.prompts import (
 
 # Summary returned when the architecture step fails; callers must not save it.
 ARCHITECTURE_FAILED = "Architecture generation failed."
+
+
+_RESERVED_IDS = ("graph", "end", "subgraph", "flowchart")
+_LABEL_OR_ID = re.compile(
+    r'(\[[^\]]*\]|\([^)]*\)|\{[^}]*\}|"[^"]*"|\|[^|]*\|)'
+    r"|(?<![\w.-])(" + "|".join(_RESERVED_IDS) + r")(?![\w.-])"
+)
+
+
+def rename_reserved_ids(mermaid: str) -> str:
+    """Rename Mermaid keywords used as node ids (e.g. `graph`) so it parses."""
+    out = []
+    for i, line in enumerate(mermaid.split("\n")):
+        if i == 0 or line.strip() == "end":
+            out.append(line)
+            continue
+        head = ""
+        if line.strip().startswith("subgraph"):
+            idx = line.index("subgraph") + len("subgraph")
+            head, line = line[:idx], line[idx:]
+        out.append(head + _LABEL_OR_ID.sub(
+            lambda m: m.group(1) or m.group(2) + "_node", line))
+    return "\n".join(out)
 
 
 def parse_architecture_response(llm_response: str,) -> tuple[str, str]:
@@ -81,4 +106,4 @@ def generate_architecture(
         print("[architecture.py] LLM reply has no mermaid block.")
         return ARCHITECTURE_FAILED, ""
 
-    return summary, mermaid
+    return summary, rename_reserved_ids(mermaid)

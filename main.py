@@ -4,8 +4,17 @@ main.py — FastAPI application entry point.
 Registers all routers. Adds CORS. Validates config at startup.
 """
 
-from fastapi import FastAPI
+import traceback
+
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from config import validate_config
 
@@ -25,6 +34,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def _log_error(request: Request, status: int, detail) -> None:
+    # Method, path, status, reason only: never headers, bodies, queries or env.
+    print(f"[error] {request.method} {request.url.path} -> {status}: {detail}", flush=True)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(request: Request, exc: StarletteHTTPException):
+    _log_error(request, exc.status_code, exc.detail)
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError):
+    _log_error(request, 422, exc.errors())
+    return await request_validation_exception_handler(request, exc)
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error(request: Request, exc: Exception):
+    _log_error(request, 500, f"{type(exc).__name__}: {exc}")
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 @app.on_event("startup")
 async def startup_event():
