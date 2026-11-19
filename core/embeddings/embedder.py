@@ -8,7 +8,8 @@ Supports two indexing modes:
 
 Key design decision: deterministic point IDs.
   Old approach: sequential ints (0, 1, 2, ...) — different on every run.
-  New approach: MD5 hash of (repo_name, file_path, chunk_name, start_line).
+  New approach: MD5 hash of (repo_name, file_path, chunk_name, start_line,
+  end_line, sha256(text)[:16], commit_hash) — the QAD17 key.
   This means the same code chunk always gets the same ID, enabling upserts
   (Qdrant overwrites existing points with matching IDs) and targeted deletes.
 
@@ -67,9 +68,16 @@ def _chunk_id(
     chunk_name: str,
     start_line: int,
     commit_hash: str | None = None,
+    *,
+    end_line: int | None = None,
+    text: str = "",
 ) -> str:
     """
-    Deterministic ID for a chunk — same input always produces the same ID.
+    Deterministic ID for a chunk — same input always produces the same ID (QAD17 key).
+
+    Key: repo, file, name, start_line, end_line, sha256(text)[:16], commit.
+    text is chunk["text"] as the chunker emits it, so two chunks on the same
+    lines with different text (nested arrows) never share an ID.
 
     This is critical for incremental indexing: when a file is re-chunked,
     unchanged chunks get the same ID and are simply overwritten (no-op),
@@ -80,7 +88,8 @@ def _chunk_id(
 
     Uses MD5 hex digest (32 chars) — Qdrant accepts string IDs.
     """
-    raw = f"{repo_name}:{file_path}:{chunk_name}:{start_line}:{commit_hash or 'HEAD'}"
+    text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+    raw = f"{repo_name}:{file_path}:{chunk_name}:{start_line}:{end_line}:{text_hash}:{commit_hash or 'HEAD'}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
@@ -108,6 +117,8 @@ def _build_ids_and_payloads(
             chunk["name"],
             chunk["start_line"],
             commit_hash,
+            end_line=chunk["end_line"],
+            text=chunk["text"],
         )
         ids.append(chunk_id)
         texts.append(chunk["text"])

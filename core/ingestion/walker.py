@@ -101,16 +101,15 @@ def is_test_file(filename: str) -> bool:
     The LLM analysing test files produces lower-quality architecture insights.
 
     Patterns caught:
-      test_auth.py, auth_test.py, auth.test.js, auth.spec.ts
+      test_auth.py, auth_test.py, and auth.test.* / auth.spec.* for
+      .js, .ts, .jsx, .tsx (any case: Button.Test.TSX counts)
     """
     name = filename.lower()
     return (
         name.startswith("test_")
         or name.endswith("_test.py")
-        or name.endswith(".test.js")
-        or name.endswith(".test.ts")
-        or name.endswith(".spec.js")
-        or name.endswith(".spec.ts")
+        or name.endswith((".test.js", ".test.ts", ".test.jsx", ".test.tsx"))
+        or name.endswith((".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx"))
     )
 
 
