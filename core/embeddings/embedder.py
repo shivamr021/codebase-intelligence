@@ -17,6 +17,8 @@ the vector name and the thread count. This file only stores them with upsert().
 """
 
 import hashlib
+from collections.abc import Iterable
+from itertools import chain, islice
 
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -31,20 +33,32 @@ _qdrant = QdrantClient(
     timeout=60,
 )
 
-UPLOAD_GROUP = 100  # points per Qdrant upsert request
+UPLOAD_GROUP = 100  # points per Qdrant upsert request; sets network chunking only (AD7)
+
+# Texts per model call. Batch 1 peaks near 14 MB, batch 100 near 3.3 GB [measured, AD7 sweep3, 2 CPUs].
+EMBED_BATCH = 1
 
 
-def _upload(coll: str, ids: list[str], texts: list[str], payloads: list[dict]) -> None:
-    """Embed and upsert in groups of UPLOAD_GROUP; create the collection when it is missing."""
-    name = vectors.dense_name()
-    for start in range(0, len(ids), UPLOAD_GROUP):
-        end = start + UPLOAD_GROUP
-        group = vectors.passage_vectors(texts[start:end])
-        if start == 0 and not _qdrant.collection_exists(coll):
+def _upload(coll: str, chunks: Iterable[dict], repo_name: str, commit_hash: str | None) -> int:
+    """Stream chunks: embed EMBED_BATCH texts per model call, upsert UPLOAD_GROUP points per
+    request, create the collection on the first group. Returns the number of points stored."""
+    name, stored, stream = vectors.dense_name(), 0, iter(chunks)
+    while group := list(islice(stream, UPLOAD_GROUP)):
+        ids, texts, payloads = _build_ids_and_payloads(group, repo_name, commit_hash)
+        vecs = [v for s in range(0, len(texts), EMBED_BATCH)
+                for v in vectors.passage_vectors(texts[s:s + EMBED_BATCH])]
+        if stored == 0 and not _qdrant.collection_exists(coll):
             _qdrant.create_collection(coll, vectors_config={
-                name: VectorParams(size=len(group[0]), distance=Distance.COSINE)})
+                name: VectorParams(size=len(vecs[0]), distance=Distance.COSINE)})
         _qdrant.upsert(coll, points=[PointStruct(id=i, vector={name: v}, payload=p)
-                                     for i, v, p in zip(ids[start:end], group, payloads[start:end])])
+                                     for i, v, p in zip(ids, vecs, payloads)])
+        stored += len(group)
+    return stored
+
+
+def count_points(coll: str) -> int:
+    """Points stored in a collection; 0 when it does not exist."""
+    return _qdrant.count(coll).count if _qdrant.collection_exists(coll) else 0
 
 
 def _chunk_id(
@@ -151,7 +165,7 @@ def _delete_if_exists(collection_name: str) -> None:
 
 
 def embed_and_store(
-    chunks: list[dict],
+    chunks: Iterable[dict],
     repo_name: str,
     commit_hash: str | None = None,
     collection_name: str | None = None,
@@ -160,48 +174,38 @@ def embed_and_store(
     Full index path — embed ALL chunks and store in a fresh Qdrant collection.
 
     Used for first-time ingestion of a repo. Deletes any existing collection
-    and rebuilds from scratch with deterministic IDs.
+    and rebuilds from scratch with deterministic IDs. chunks may be a stream (AD7).
 
     collection_name defaults to repo_name for backwards compatibility.
     When indexing a branch/commit, the caller passes a versioned name.
     """
     coll = collection_name or repo_name
+    stream = iter(chunks)
+    first = next(stream, None)
 
-    if not chunks:
+    if first is None:
         return {
             "status": "error",
             "message": "No chunks provided — nothing to embed.",
-            "chunks_stored": 0,
-        }
-    
-    if len(chunks) > 1000:
-        return {
-            "status": "error",
-            "message": (
-                f"Repository too large. "
-                f"{len(chunks)} chunks exceeds limit."
-            ),
             "chunks_stored": 0,
         }
 
     # Delete stale collection — _upload() recreates it with correct params
     _delete_if_exists(coll)
 
-    ids, texts, payloads = _build_ids_and_payloads(chunks, repo_name, commit_hash)
-
     try:
-        print(f"[embedder.py] Embedding {len(chunks)} chunks...")
+        print(f"[embedder.py] Embedding chunks into '{coll}'...")
 
-        _upload(coll, ids, texts, payloads)
+        stored = _upload(coll, chain([first], stream), repo_name, commit_hash)
 
         # Create payload indexes for efficient filtering and deletes
         _ensure_payload_index(coll)
 
-        print(f"[embedder.py] Stored {len(chunks)} chunks in '{coll}'")
+        print(f"[embedder.py] Stored {stored} chunks in '{coll}'")
         return {
             "status":        "success",
             "repo_name":     repo_name,
-            "chunks_stored": len(chunks),
+            "chunks_stored": stored,
         }
 
     except UnexpectedResponse as e:
@@ -219,7 +223,7 @@ def embed_and_store(
 
 
 def upsert_chunks(
-    chunks: list[dict],
+    chunks: Iterable[dict],
     repo_name: str,
     commit_hash: str | None = None,
     collection_name: str | None = None,
@@ -233,25 +237,14 @@ def upsert_chunks(
     """
     coll = collection_name or repo_name
 
-    if not chunks:
-        return {
-            "status": "success",
-            "repo_name": repo_name,
-            "chunks_stored": 0,
-        }
-
-    ids, texts, payloads = _build_ids_and_payloads(chunks, repo_name, commit_hash)
-
     try:
-        print(f"[embedder.py] Upserting {len(chunks)} chunks into '{coll}'...")
+        stored = _upload(coll, chunks, repo_name, commit_hash)
 
-        _upload(coll, ids, texts, payloads)
-
-        print(f"[embedder.py] Upserted {len(chunks)} chunks in '{coll}'")
+        print(f"[embedder.py] Upserted {stored} chunks in '{coll}'")
         return {
             "status":        "success",
             "repo_name":     repo_name,
-            "chunks_stored": len(chunks),
+            "chunks_stored": stored,
         }
 
     except UnexpectedResponse as e:
@@ -279,6 +272,9 @@ def delete_file_chunks(repo_name: str, file_paths: list[str]) -> int:
 
     Uses a payload filter on file_path, which is indexed as a keyword
     for fast lookups (see _ensure_payload_index).
+
+    A failed delete raises (AD7): stale chunks left behind would be
+    answered as current code, so the caller must stop the run.
     """
     if not file_paths:
         return 0
@@ -310,4 +306,4 @@ def delete_file_chunks(repo_name: str, file_paths: list[str]) -> int:
 
     except Exception as e:
         print(f"[embedder.py] Failed to delete file chunks: {e}")
-        return 0
+        raise

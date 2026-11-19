@@ -56,13 +56,17 @@ def parse_architecture_response(llm_response: str,) -> tuple[str, str]:
 def generate_architecture(
     chunks: list[dict],
     architecture_context: dict,
+    file_paths: list[str] | None = None,
 ) -> tuple[str, str]:
+    """file_paths: every walked file (AD7); without it the names come from chunks.
+    chunks: the code samples sent; callers pass only changed files' chunks on an incremental run."""
 
     code_context = (
         "Use dependency graph information first. "
-        "Code samples are secondary."
+        "Code samples are secondary.\n\n"
+        + format_chunks_for_prompt(chunks)
     )
-    files = sorted({
+    files = sorted(set(file_paths) if file_paths is not None else {
         chunk["file_path"]
         for chunk in chunks
     })

@@ -52,6 +52,7 @@ Likely failure points (know these):
 """
 
 import os
+from collections.abc import Iterator
 from tree_sitter import Language, Parser
 import tree_sitter_python as tspython
 import tree_sitter_javascript as tsjavascript
@@ -465,18 +466,18 @@ def chunk_file(file_info: dict) -> list[dict]:
     return chunks
 
 
-def chunk_files(file_list: list[dict]) -> list[dict]:
+def chunk_files(file_list: list[dict]) -> Iterator[dict]:
     """
-    Convenience wrapper — chunks an entire list of files.
-    Returns all chunks from all files as one flat list.
+    Yield the chunks of every file, one file at a time (AD7), so the
+    ingestion pipeline never holds the whole repository's chunks at once.
 
     Called by the ingestion pipeline after walker.py returns file_list.
     """
-    all_chunks = []
+    total = 0
 
     for file_info in file_list:
         file_chunks = chunk_file(file_info)
-        all_chunks.extend(file_chunks)
+        total += len(file_chunks)
 
         # Progress log — useful when indexing large repos
         if file_chunks:
@@ -484,6 +485,6 @@ def chunk_files(file_list: list[dict]) -> list[dict]:
                 f"[chunker.py] {file_info['rel_path']} "
                 f"→ {len(file_chunks)} chunks"
             )
+        yield from file_chunks
 
-    print(f"[chunker.py] Total chunks across all files: {len(all_chunks)}")
-    return all_chunks
+    print(f"[chunker.py] Total chunks across all files: {total}")

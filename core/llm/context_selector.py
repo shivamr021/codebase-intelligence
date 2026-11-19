@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 
@@ -61,21 +62,26 @@ def score_file(path: str) -> int:
     return score
 
 
+def _keep_largest(best_per_file: dict, chunk: dict) -> None:
+    """Keep each file's largest chunk; on a tie the one that starts first in the file."""
+    current = best_per_file.get(chunk["file_path"])
+    if current is None or (len(chunk["text"]), -chunk["start_line"]) > (len(current["text"]), -current["start_line"]):
+        best_per_file[chunk["file_path"]] = chunk
+
+
+def track_largest(chunks: Iterable[dict], best_per_file: dict) -> Iterator[dict]:
+    """Pass a chunk stream through unchanged while keeping each file's largest chunk (AD7)."""
+    for chunk in chunks:
+        _keep_largest(best_per_file, chunk)
+        yield chunk
+
+
 def select_architecture_chunks(chunks: list[dict], max_chunks: int = 12,) -> list[dict]:
 
     best_per_file = {}
 
     for chunk in chunks:
-
-        path = chunk["file_path"]
-
-        current = best_per_file.get(path)
-
-        if current is None:
-            best_per_file[path] = chunk
-
-        elif len(chunk["text"]) > len(current["text"]):
-            best_per_file[path] = chunk
+        _keep_largest(best_per_file, chunk)
 
     files = list(best_per_file.values())
 

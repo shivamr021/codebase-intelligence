@@ -28,12 +28,17 @@ Graph rebuild on incremental update:
   complete file tree — only the Qdrant embedding step is incremental.
 """
 
+import os
 import shutil
 import stat
 import threading
+import time
+from itertools import chain
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from core.llm.context_selector import (
     select_architecture_chunks,
+    track_largest,
 )
 from core.graph.builder import (
     build_dependency_graph,
@@ -54,6 +59,7 @@ from core.ingestion.walker import walk_repo
 from core.ingestion.chunker import INDEX_VERSION, chunk_files, read_index_version
 from core.ingestion.diff import compute_file_diff
 from core.embeddings.embedder import (
+    count_points,
     embed_and_store,
     upsert_chunks,
     delete_file_chunks,
@@ -120,6 +126,16 @@ def _build_file_hashes(file_list: list[dict]) -> dict[str, str]:
     return {f["rel_path"]: f["content_hash"] for f in file_list}
 
 
+def _log_ingest_stats(collection_name: str, files: int, chunks: int, started: float) -> None:
+    """AD7 measuring step: files, chunks, points, seconds and RSS after embedding, once per ingest."""
+    try:
+        rss_kb = int(Path("/proc/self/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE") // 1024
+    except (OSError, ValueError, AttributeError):
+        rss_kb = -1  # no /proc on this platform
+    print(f"[ingest] stats files={files} chunks={chunks} points={count_points(collection_name)} "
+          f"seconds={time.monotonic() - started:.2f} rss_kb={rss_kb}")
+
+
 def _run_graph_and_architecture(
     file_list, all_chunks, repo_name, graph_cache,
     commit_sha, file_hashes, index_version,
@@ -137,7 +153,7 @@ def _run_graph_and_architecture(
     This means it always builds the complete dependency graph, even during
     incremental updates — because the full clone is still on disk at this point.
 
-    The chunks are only used for the architecture LLM summary.
+    The chunks are only the architecture's code samples; it names every file in file_list (AD7).
     """
     # Build dependency graph from ALL files on disk
     graph = build_dependency_graph(file_list)
@@ -161,6 +177,7 @@ def _run_graph_and_architecture(
     summary, mermaid = generate_architecture(
         architecture_chunks,
         architecture_context,
+        file_paths=[f["rel_path"] for f in file_list],
     )
 
     architecture_ok = summary != ARCHITECTURE_FAILED
@@ -219,7 +236,8 @@ def _retry_architecture(collection_name, metadata, commit_sha, file_hashes) -> b
         deserialize_graph(metadata.get("graph_data") or {})
     )
     chunks = select_architecture_chunks(retrieve_all_chunks(collection_name, limit=100), max_chunks=12)
-    summary, mermaid = generate_architecture(chunks, context)
+    # AD7: the same input as an ingest — every file of the stored index by name.
+    summary, mermaid = generate_architecture(chunks, context, file_paths=list(file_hashes) or None)
     architecture_ok = summary != ARCHITECTURE_FAILED
 
     save_repo_metadata(
@@ -325,6 +343,7 @@ def ingest_repo(request: IngestRequest):
 
 def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_name):
     """Phases 1b-5 of ingest_repo, run while this collection's lock is held."""
+    started = time.monotonic()
     # Check if this version has been indexed before
     existing_metadata = get_repo_metadata(collection_name)
     stored_sha = existing_metadata.get("commit_sha") if existing_metadata else None
@@ -475,17 +494,22 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
             # For modified files: delete old chunks first, then upsert new ones.
             # This is necessary because a modified file might produce different
             # chunks (function renamed, split, etc.)
+            # A failed delete stops the run before any metadata is saved (AD7).
             files_to_delete = diff["deleted"] + [f["rel_path"] for f in diff["modified"]]
             if files_to_delete:
-                delete_file_chunks(collection_name, files_to_delete)
+                try:
+                    delete_file_chunks(collection_name, files_to_delete)
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=f"Stale-chunk delete failed: {e}")
                 print(f"[ingest] Deleted stale chunks for {len(files_to_delete)} files")
 
-            # ── Chunk and upsert ONLY changed files ────────────────────
+            # ── Chunk and upsert ONLY changed files, streamed ──────────
             files_to_chunk = diff["added"] + diff["modified"]
-            new_chunks = chunk_files(files_to_chunk)
+            largest = {}  # each changed file's largest chunk, for the architecture
+            new_chunks = track_largest(chunk_files(files_to_chunk), largest)
 
             chunks_stored = 0
-            if new_chunks:
+            if files_to_chunk:
                 upsert_result = upsert_chunks(
                     new_chunks, collection_name,
                     commit_hash=commit_sha,
@@ -499,6 +523,7 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
                 chunks_stored = upsert_result["chunks_stored"]
 
             print(f"[ingest] Incremental update: {chunks_stored} chunks upserted")
+            _log_ingest_stats(collection_name, len(file_list), chunks_stored, started)
 
             # ── Rebuild graph + architecture ───────────────────────────
             # Graph: build_dependency_graph() takes the FULL file_list and
@@ -506,14 +531,10 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
             # the full clone is still on disk, this always produces the
             # complete, correct global dependency graph.
             #
-            # Architecture LLM: needs representative chunks. We chunk ALL
-            # files for this (including unchanged) so the LLM sees the
-            # full picture. These unchanged-file chunks are NOT sent to
-            # Qdrant (they're already stored there from the previous run).
-            all_chunks_for_architecture = new_chunks + chunk_files(diff["unchanged"])
-
+            # Architecture LLM (ruling 2): names every walked file, code
+            # only from the changed files; unchanged files are not re-chunked.
             architecture_ok = _run_graph_and_architecture(
-                file_list, all_chunks_for_architecture, collection_name, graph_cache,
+                file_list, list(largest.values()), collection_name, graph_cache,
                 commit_sha, current_hashes, read_index_version(existing_metadata),
             )
 
@@ -541,20 +562,22 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
             # ══════════════════════════════════════════════════════════
             print(f"[ingest] No previous index — running full ingestion")
 
-            # ── Step 3: Chunk ──────────────────────────────────────────
-            all_chunks = chunk_files(file_list)
+            # ── Step 3: Chunk (streamed, AD7) ──────────────────────────
+            # The first chunk is read before embed_and_store() replaces
+            # the old collection, so an empty stream never touches it.
+            largest = {}  # each file's largest chunk, for the architecture
+            stream = track_largest(chunk_files(file_list), largest)
+            first = next(stream, None)
 
-            if not all_chunks:
+            if first is None:
                 raise HTTPException(
                     status_code=500,
                     detail="Chunking produced no output. This is unexpected — check logs.",
                 )
 
-            print(f"[ingest] Produced {len(all_chunks)} chunks total")
-
             # ── Step 4: Embed + Store ──────────────────────────────────
             embed_result = embed_and_store(
-                all_chunks, collection_name,
+                chain([first], stream), collection_name,
                 commit_hash=commit_sha,
                 collection_name=collection_name,
             )
@@ -566,10 +589,11 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
                 )
 
             print(f"[ingest] Stored {embed_result['chunks_stored']} chunks in Qdrant")
+            _log_ingest_stats(collection_name, len(file_list), embed_result["chunks_stored"], started)
 
             # ── Step 5: Graph + Architecture + Metadata ────────────────
             architecture_ok = _run_graph_and_architecture(
-                file_list, all_chunks, collection_name, graph_cache,
+                file_list, list(largest.values()), collection_name, graph_cache,
                 commit_sha, current_hashes, INDEX_VERSION,
             )
 
