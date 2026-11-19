@@ -3,7 +3,7 @@ import pytest
 from core.embeddings.embedder import _chunk_id
 from core.ingestion.chunker import chunk_file
 
-LANG = {"py": "python", "ts": "typescript", "js": "javascript"}
+LANG = {"py": "python", "ts": "typescript", "js": "javascript", "tsx": "typescript"}  # tsx label as walker.py:42
 
 def chunks_of(tmp_path, name, text, newline="\n"):
     path = tmp_path / name
@@ -105,3 +105,31 @@ def test_crlf_file_keeps_line_numbers_of_module_and_function_chunks(tmp_path):
     chunks = chunks_of(tmp_path, "config.py", PY_MID, newline="\r\n")
     assert sorted((c["start_line"], c["end_line"]) for c in chunks if c["chunk_type"] == "function") == [(1, 3), (10, 12)]
     assert "\r" not in holder(chunks, "EMBEDDING_MODEL =", 7)["text"]
+
+
+TSX = ('export function App({ items }: { items: string[] }) {\n'
+       '  return (\n    <div className="list">\n'
+       '      {items.map((i) => <Item key={i} />)}\n    </div>\n  );\n}\n')
+
+TSX_LIST = ('export function List({ rows }: { rows: number[] }) {\n'
+            '  const n = rows.length;\n  return (\n    <section title="list">\n      <p>{n}</p>\n'
+            '      {rows.map((r) => <Row key={r} />)}\n    </section>\n  );\n}\n')
+
+# Second name: a grammar switch keyed to "App.tsx" (not the .tsx suffix) fails the List case.
+@pytest.mark.parametrize("name, component, text, lines", [
+    ("App.tsx", "App", TSX, (1, 7)),
+    ("List.tsx", "List", TSX_LIST, (1, 9)),
+], ids=["App", "List"])
+def test_tsx_component_chunk_covers_whole_function(tmp_path, name, component, text, lines):
+    # Break: .tsx parsed with the plain TypeScript grammar, so JSX is a syntax error and the component is cut or lost.
+    got = [c for c in chunks_of(tmp_path, name, text) if c["name"] == component]
+    assert len(got) == 1 and (got[0]["start_line"], got[0]["end_line"]) == lines
+
+
+TS_ASSERT = ('const o = <Config>{ a: 1 };\n\n'
+             'export function twice(n: number) {\n  const m = n * 2;\n  return m;\n}\n')
+
+def test_ts_angle_bracket_assertion_keeps_later_function(tmp_path):
+    # Break: plain .ts parsed with the TSX grammar, which reads <Config> as a JSX tag and loses twice.
+    got = [c for c in chunks_of(tmp_path, "u.ts", TS_ASSERT) if c["name"] == "twice"]
+    assert len(got) == 1 and (got[0]["start_line"], got[0]["end_line"]) == (3, 6)

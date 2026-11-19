@@ -145,7 +145,7 @@ def read_index_version(metadata: dict | None) -> int:
     return 1
 
 
-def _get_parser(language: str) -> Parser | None:
+def _get_parser(language: str, file_path: str = "") -> Parser | None:
     """
     Build a tree-sitter Parser for the given language.
     Returns None if the language isn't supported (shouldn't happen
@@ -154,6 +154,8 @@ def _get_parser(language: str) -> Parser | None:
     lang_obj = LANGUAGE_MAP.get(language)
     if lang_obj is None:
         return None
+    if language == "typescript" and file_path.endswith(".tsx"):
+        lang_obj = TSX_LANGUAGE  # JSX needs the TSX grammar; label stays "typescript"
 
     parser = Parser()
     parser.set_language(lang_obj)
@@ -209,7 +211,7 @@ def _chunk_by_ast(
         ...
     ]
     """
-    parser = _get_parser(language)
+    parser = _get_parser(language, file_rel_path)
     if parser is None:
         return []
 

@@ -49,6 +49,7 @@ import tree_sitter_typescript as tstypescript
 PY_LANGUAGE = Language(tspython.language(), "python")
 JS_LANGUAGE = Language(tsjavascript.language(), "javascript")
 TS_LANGUAGE = Language(tstypescript.language_typescript(), "typescript")
+TSX_LANGUAGE = Language(tstypescript.language_tsx(), "tsx")
 
 LANGUAGE_MAP = {
     "python":     PY_LANGUAGE,
@@ -390,6 +391,8 @@ def build_dependency_graph(file_list: list[dict]) -> nx.DiGraph:
         lang_obj = LANGUAGE_MAP.get(language)
         if lang_obj is None:
             continue
+        if language == "typescript" and rel_path.endswith(".tsx"):
+            lang_obj = TSX_LANGUAGE  # JSX needs the TSX grammar; label stays "typescript"
 
         parser = Parser()
         parser.set_language(lang_obj)
