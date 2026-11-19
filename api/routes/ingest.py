@@ -262,6 +262,40 @@ def _retry_architecture(collection_name, metadata, commit_sha, file_hashes) -> b
 # -----------------------------------------------------------------------
 _busy_collections: set[str] = set()
 _busy_lock = threading.Lock()
+# The busy collections under a full re-index (AD11, ruling 1): /ask answers
+# 503 for them. An incremental update keeps answering from the old index.
+_rebuilding: set[str] = set()
+
+
+def is_rebuilding(collection_name: str) -> bool:
+    """True while a full re-index of this collection runs; read by /ask."""
+    with _busy_lock:
+        return collection_name in _rebuilding
+
+
+def _save_rebuild_marker(collection_name: str, metadata: dict) -> None:
+    """
+    AD11: before a full re-index deletes the collection, store the repo's
+    metadata with index_version 0 and every other field unchanged. Until the
+    build finishes and writes INDEX_VERSION, no fast path reuses the partial
+    index and /check reports compatible: false. A failed write stops the run.
+    """
+    named = ("repo_name", "summary", "mermaid", "graph_stats", "graph_data",
+             "architecture_context", "commit_sha", "file_hashes")
+    try:
+        save_repo_metadata(
+            repo_name=collection_name,
+            summary=metadata.get("summary", ""),
+            mermaid=metadata.get("mermaid", ""),
+            graph_stats=metadata.get("graph_stats", {}),
+            graph_data=metadata.get("graph_data", {}),
+            architecture_context=metadata.get("architecture_context"),
+            commit_sha=metadata.get("commit_sha"),
+            file_hashes=metadata.get("file_hashes", {}),
+            extra={**{k: v for k, v in metadata.items() if k not in named}, "index_version": 0},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Re-index marker write failed: {e}")
 
 
 @router.post(
@@ -339,6 +373,7 @@ def ingest_repo(request: IngestRequest):
     finally:
         with _busy_lock:
             _busy_collections.discard(collection_name)
+            _rebuilding.discard(collection_name)
 
 
 def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_name):
@@ -354,7 +389,8 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
     # with another embedding model (old vector name) or an older chunker
     # (index_version). Neither early path may reuse such an index (AD4).
     # Nothing is deleted here: embed_and_store() replaces the collection
-    # only after the download succeeded.
+    # only after the download succeeded, and only after the version-0
+    # marker is stored (AD11). /ask answers 503 from here on.
     # ══════════════════════════════════════════════════════════════════
     full_reindex = bool(existing_metadata) and (
         request.force or not is_index_compatible(collection_name, existing_metadata)
@@ -362,6 +398,8 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
     if full_reindex:
         reason = "force requested" if request.force else "stored index is not compatible"
         print(f"[ingest] Full re-index of '{collection_name}': {reason}")
+        with _busy_lock:
+            _rebuilding.add(collection_name)
 
     # ══════════════════════════════════════════════════════════════════
     # FAST PATH: Already up to date — NO download needed
@@ -575,12 +613,19 @@ def _ingest_collection(request, repo_name, commit_sha, owner, repo, collection_n
                     detail="Chunking produced no output. This is unexpected — check logs.",
                 )
 
-            # ── Step 4: Embed + Store ──────────────────────────────────
-            embed_result = embed_and_store(
-                chain([first], stream), collection_name,
-                commit_hash=commit_sha,
-                collection_name=collection_name,
-            )
+            # ── Step 4: Marker, then Embed + Store ─────────────────────
+            # The marker goes first, so a build that dies after the delete
+            # is never served as current (AD11).
+            if full_reindex:
+                _save_rebuild_marker(collection_name, existing_metadata)
+            try:
+                embed_result = embed_and_store(
+                    chain([first], stream), collection_name,
+                    commit_hash=commit_sha,
+                    collection_name=collection_name,
+                )
+            except Exception as e:  # only the collection delete raises (AD11)
+                raise HTTPException(status_code=500, detail=f"Collection delete failed: {e}")
 
             if embed_result["status"] == "error":
                 raise HTTPException(

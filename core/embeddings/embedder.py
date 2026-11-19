@@ -154,14 +154,14 @@ def _delete_if_exists(collection_name: str) -> None:
 
     We DON'T recreate it here — _upload() creates it with the vector name
     and size of the configured model.
+
+    A failed check or delete raises (AD11): new points must never be mixed
+    into the old collection, so the caller stops the run.
     """
-    try:
-        existing = [c.name for c in _qdrant.get_collections().collections]
-        if collection_name in existing:
-            _qdrant.delete_collection(collection_name)
-            print(f"[embedder.py] Deleted existing collection '{collection_name}'")
-    except Exception as e:
-        print(f"[embedder.py] Warning: could not check/delete collection: {e}")
+    existing = [c.name for c in _qdrant.get_collections().collections]
+    if collection_name in existing:
+        _qdrant.delete_collection(collection_name)
+        print(f"[embedder.py] Deleted existing collection '{collection_name}'")
 
 
 def embed_and_store(
@@ -190,7 +190,8 @@ def embed_and_store(
             "chunks_stored": 0,
         }
 
-    # Delete stale collection — _upload() recreates it with correct params
+    # Delete stale collection — _upload() recreates it with correct params.
+    # Raises on failure (AD11); nothing has been written yet.
     _delete_if_exists(coll)
 
     try:

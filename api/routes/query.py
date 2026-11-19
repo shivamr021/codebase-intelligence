@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from api.models import AskRequest, AskResponse, AskSource
+from api.routes import ingest as ingest_routes  # module access: a reload rebinds its busy sets
 from core.retrieval.retriever import retrieve_chunks
 from core.llm.client import LLM_ERROR_PREFIX, call_llm_reply
 from core.llm.prompts import ANSWER_QUESTION, REFUSAL_SENTENCE, format_chunks_for_prompt
@@ -38,6 +39,14 @@ def ask_question(request: AskRequest):
     If commit_hash is provided, only chunks from that specific version
     are returned — enabling version-specific Q&A.
     """
+
+    # AD11, ruling 1: a repo under a full re-index has a half-built index.
+    # An incremental update keeps answering from the old index.
+    if ingest_routes.is_rebuilding(request.repo_name):
+        raise HTTPException(
+            status_code=503,
+            detail=f"'{request.repo_name}' is being re-indexed, try again in a minute.",
+        )
 
     # Retrieve top-5 most relevant chunks for this question
     chunks = retrieve_chunks(
